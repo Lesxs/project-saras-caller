@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Project S.A.R.A.S Caller</title>
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#12141a">
+<link rel="icon" href="icon-192.png">
+<style>
+:root{color-scheme:dark;--bg:#1e1f22;--pn:#2b2d31;--in:#1a1b1e;--ln:#41434a;--fg:#f2f3f5;--mut:#a3a6ad;--ac:#5865f2;--ac2:#4752c4;--ok:#23a55a;--bad:#f23f43}
+*{box-sizing:border-box}
+body{margin:0;padding:16px;font:15px/1.45 "gg sans","Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg)}
+main{max-width:900px;margin:0 auto;display:grid;gap:14px}
+section{display:grid;gap:14px}
+p{margin:0}
+.mut{color:var(--mut);font-size:13px}
+header{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px;padding:12px 14px;background:var(--pn);border:1px solid var(--ln);border-radius:12px}
+header img{width:28px;height:28px;border-radius:8px;justify-self:start}
+h1{font-size:clamp(15px,4.4vw,22px);margin:0;font-weight:700;text-align:center;letter-spacing:.02em}
+.tag{justify-self:end;font-size:12px;padding:3px 12px;border:1px solid var(--ln);border-radius:99px;color:var(--mut)}
+.tag.on{border-color:var(--ok);color:var(--ok)}
+.box{background:var(--pn);border:1px solid var(--ln);border-radius:12px;padding:16px;display:grid;gap:12px}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:end}
+label{display:grid;gap:4px;font-size:13px;color:var(--mut)}
+select,input{font:inherit;color:var(--fg);background:var(--in);border:1px solid var(--ln);border-radius:8px;padding:8px 10px}
+input[type=number]{width:100px}
+button{font:inherit;cursor:pointer;color:#fff;background:var(--ac);border:1px solid var(--ac);border-radius:8px;padding:8px 14px;font-weight:600}
+button:hover{background:var(--ac2);border-color:var(--ac2)}
+button.sec{background:transparent;border-color:var(--ln);color:var(--fg);font-weight:500}
+button.sec:hover{border-color:var(--ac);background:rgba(88,101,242,.15)}
+button.bad{background:var(--bad);border-color:var(--bad)}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+input:focus,select:focus{border-color:var(--ac)}
+h2{font-size:13px;margin:0;color:var(--mut);font-weight:600}
+ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
+li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 12px;background:var(--in);border:1px solid var(--ln);border-radius:8px}
+li div{display:flex;gap:6px}
+#pv{width:100%;max-width:360px}
+#stage{display:grid;gap:8px}
+video{width:100%;background:#000;border:1px solid var(--ln);border-radius:12px;max-height:80vh}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--pn);border:1px solid var(--ln);border-radius:12px;padding:8px 12px}
+.bar input[type=range]{width:110px;padding:0;accent-color:var(--ac)}
+.hide{display:none!important}
+#msg{min-height:1.4em}
+#stage:fullscreen{background:#000;display:flex;flex-direction:column;gap:0}
+#stage:fullscreen video{flex:1;min-height:0;max-height:none;border:0;border-radius:0;object-fit:contain}
+#stage:fullscreen .bar{border-radius:0}
+body.foco{padding:0;overflow:hidden}
+body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){display:none}
+#stage.foco{position:fixed;inset:0;z-index:5;background:#000;gap:0}
+#stage.foco video{height:100%;max-height:none;border:0;border-radius:0;object-fit:contain}
+#stage.foco .bar{position:absolute;left:0;right:0;bottom:0;border-radius:0;opacity:0}
+#stage.foco:hover .bar,#stage.foco .bar:focus-within{opacity:1}
+</style>
+</head>
+<body>
+<main>
+  <header><img src="icon-192.png" alt=""><h1>Project S.A.R.A.S Caller</h1><span id="tag" class="tag">Offline</span></header>
+  <p id="msg" class="mut"></p>
+
+  <!-- Grupo -->
+  <div id="gbox" class="box">
+    <h2>Grupo de amigos</h2>
+    <div id="gin" class="row">
+      <label>Código do grupo <input id="gc" placeholder="ex.: 3fa9-c21b-77d0" autocomplete="off" maxlength="40"></label>
+      <button id="gjoin">Entrar</button>
+      <button id="gnew" class="sec">Criar código novo</button>
+    </div>
+    <div id="gon" class="row hide">
+      <span>Grupo: <b id="gcode"></b></span>
+      <button id="gcp" class="sec">Copiar código</button>
+      <button id="gout" class="sec">Sair do grupo</button>
+    </div>
+    <p class="mut">Combine o código uma vez com os amigos. Quem tem o código vê as lives do grupo, e você ainda aprova cada pessoa que pedir para entrar.</p>
+  </div>
+
+  <section id="app" class="hide">
+    <div class="box">
+      <label>Seu nome (opcional) <input id="nick" maxlength="20" placeholder="ex.: Pedro"></label>
+    </div>
+
+    <div class="box">
+      <h2>Ao vivo agora</h2>
+      <ul id="lv"></ul>
+    </div>
+
+    <div class="box">
+      <h2>Transmitir</h2>
+      <div class="row">
+        <label>Resolução
+          <select id="res"><option value="720">720p</option><option value="1080" selected>1080p</option><option value="1440">1440p (2K)</option></select>
+        </label>
+        <label>FPS
+          <select id="fps"><option value="30">30</option><option value="60" selected>60</option></select>
+        </label>
+        <label>Bitrate (kbps)
+          <input id="br" type="number" min="500" max="30000" step="500" value="6000">
+        </label>
+        <label>Máx. espectadores
+          <input id="max" type="number" min="1" max="10" value="4">
+        </label>
+        <button id="go">Streamar</button>
+        <button id="stop" class="bad hide">Parar</button>
+      </div>
+      <p class="mut">Escolha a tela ou janela e marque “compartilhar áudio” para enviar o som. Resolução, FPS e bitrate podem ser mudados durante a transmissão.</p>
+
+      <div id="live" class="hide" style="display:grid;gap:12px">
+        <div class="row"><button id="pvb" class="sec">Esconder prévia</button><span class="mut">Se você compartilha a tela inteira, a prévia aparece repetida dentro dela. Compartilhar só a janela do jogo evita isso.</span></div>
+        <video id="pv" muted autoplay playsinline></video>
+        <p id="stats" class="mut"></p>
+        <h2>Pedidos de entrada</h2><ul id="pend"></ul>
+        <h2>Assistindo</h2><ul id="vw"></ul>
+      </div>
+    </div>
+
+    <div id="stage" class="hide">
+      <video id="v" autoplay playsinline></video>
+      <div class="bar">
+        <button id="mt" class="sec">Mutar</button>
+        <input id="vol" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume">
+        <label style="display:flex;align-items:center;gap:6px">Qualidade
+          <select id="q">
+            <option value="0">Original</option>
+            <option value="720:60:3500">720p 60 fps</option>
+            <option value="720:30:2500">720p 30 fps</option>
+            <option value="480:30:1200">480p 30 fps</option>
+            <option value="360:30:600">360p 30 fps</option>
+          </select>
+        </label>
+        <button id="pip" class="sec">Mini player</button>
+        <button id="foco" class="sec">Modo foco</button>
+        <button id="fs" class="sec">Tela cheia</button>
+        <button id="leave" class="bad">Sair</button>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+const say = (t, bad) => { $('msg').textContent = t || ''; $('msg').style.color = bad ? 'var(--bad)' : ''; };
+const tag = (t, on) => { $('tag').textContent = t; $('tag').classList.toggle('on', !!on); };
+const token = () => { const a = new Uint8Array(16); crypto.getRandomValues(a); return Array.from(a, b => b.toString(16).padStart(2, '0')).join(''); };
+const NTFY = 'https://ntfy.sh/';
+let hp, vp, stream, timer, last, vconn, es, grp, topic, myId, guest = 0;
+const pend = new Map(), viewers = new Map(), lives = new Map();
+const post = o => fetch(NTFY + topic, { method: 'POST', body: JSON.stringify(o) }).catch(() => {});
+
+/* ---------- Grupo e lista de lives ---------- */
+async function setGroup(code) {
+  code = (code || '').trim().toLowerCase();
+  if (code.length < 8) return say('Use um código com pelo menos 8 caracteres.', true);
+  if (!window.isSecureContext) return say('Abra por HTTPS para usar o site.', true);
+  const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode('tp:' + code));
+  topic = 'tp' + Array.from(new Uint8Array(h), b => b.toString(16).padStart(2, '0')).join('').slice(0, 40);
+  grp = code;
+  try { localStorage.setItem('grp', code); } catch (e) {}
+  $('gcode').textContent = code;
+  $('gin').classList.add('hide'); $('gon').classList.remove('hide'); $('app').classList.remove('hide');
+  say('');
+  subscribe();
+}
+
+function subscribe() {
+  if (es) es.close();
+  lives.clear(); drawLives();
+  es = new EventSource(NTFY + topic + '/sse?since=12h');
+  es.onmessage = e => {
+    try {
+      const m = JSON.parse(e.data); if (m.event !== 'message') return;
+      const d = JSON.parse(m.message);
+      if (d.t === 'on' && d.id !== myId) lives.set(d.id, { name: String(d.name || 'Live').slice(0, 20), at: m.time * 1000 });
+      else if (d.t === 'off') lives.delete(d.id);
+      drawLives();
+    } catch (x) {}
+  };
+}
+
+function ago(t) { const m = Math.max(1, Math.round((Date.now() - t) / 60000)); return m < 60 ? 'há ' + m + ' min' : 'há ' + Math.round(m / 60) + ' h'; }
+function drawLives() {
+  const ul = $('lv'); ul.replaceChildren();
+  if (!lives.size) { const li = document.createElement('li'); li.textContent = 'Ninguém está transmitindo agora.'; li.style.color = 'var(--mut)'; ul.appendChild(li); return; }
+  lives.forEach((l, id) => row(ul, l.name + ' · ' + ago(l.at), [['Pedir para entrar', '', () => join(id)]]));
+}
+
+function leaveGroup() {
+  if (stream) stop();
+  leave();
+  if (es) es.close();
+  grp = topic = null; try { localStorage.removeItem('grp'); } catch (e) {}
+  $('gon').classList.add('hide'); $('gin').classList.remove('hide'); $('app').classList.add('hide');
+}
+
+$('gnew').onclick = () => { const t = token(); $('gc').value = t.slice(0, 4) + '-' + t.slice(4, 8) + '-' + t.slice(8, 12); };
+$('gjoin').onclick = () => setGroup($('gc').value);
+$('gc').onkeydown = e => { if (e.key === 'Enter') setGroup($('gc').value); };
+$('gout').onclick = leaveGroup;
+$('gcp').onclick = () => { navigator.clipboard && navigator.clipboard.writeText(grp); say('Código copiado.'); };
+try { const g = localStorage.getItem('grp'); if (g) setGroup(g); } catch (e) {}
+addEventListener('pagehide', () => { if (myId && topic) navigator.sendBeacon(NTFY + topic, JSON.stringify({ t: 'off', id: myId })); });
+
+/* ---------- Streamer ---------- */
+function constraints() {
+  const h = +$('res').value, f = +$('fps').value;
+  return { width: { ideal: Math.round(h * 16 / 9) }, height: { ideal: h }, frameRate: { ideal: f, max: f } };
+}
+$('go').onclick = start; $('stop').onclick = stop;
+
+async function start() {
+  if (!grp) return say('Entre em um grupo primeiro.', true);
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: constraints(), audio: true });
+  } catch (e) { return say('Captura cancelada.'); }
+  const vt = stream.getVideoTracks()[0];
+  vt.contentHint = 'motion';
+  vt.onended = stop;
+  $('pv').srcObject = stream; $('pv').classList.remove('hide'); $('pvb').textContent = 'Esconder prévia';
+  if (!stream.getAudioTracks().length) say('Sem áudio: marque “compartilhar áudio do sistema” ao escolher a tela.');
+  else say('');
+
+  const id = 'sv' + token();
+  hp = new Peer(id);
+  hp.on('open', () => {
+    myId = id; lives.delete(id); drawLives();
+    post({ t: 'on', id, name: $('nick').value.trim().slice(0, 20) || 'Streamer' });
+    $('live').classList.remove('hide'); tag('Ao vivo', 1);
+    $('go').classList.add('hide'); $('stop').classList.remove('hide');
+    timer = setInterval(stats, 2000);
+  });
+  hp.on('connection', conn => {
+    conn.on('data', d => {
+      if (d && d.t === 'q' && viewers.has(conn.peer)) {
+        const v = viewers.get(conn.peer), n = x => Math.max(0, Math.min(+x || 0, 100000));
+        v.q = { h: Math.min(n(d.h), 2160), f: Math.min(n(d.f), 60), b: n(d.b) };
+        applyBr(v.call);
+        return;
+      }
+      if (!d || d.t !== 'hi' || pend.has(conn.peer) || viewers.has(conn.peer)) return;
+      if (pend.size + viewers.size >= +$('max').value) { conn.send({ t: 'full' }); setTimeout(() => conn.close(), 300); return; }
+      pend.set(conn.peer, { conn, nick: String(d.nick || '').trim().slice(0, 20) || 'Convidado ' + (++guest) });
+      draw();
+    });
+    conn.on('close', () => { pend.delete(conn.peer); draw(); });
+  });
+  hp.on('error', e => say('Erro de conexão: ' + e.type, true));
+}
+
+function accept(id) {
+  const p = pend.get(id); if (!p || !stream) return;
+  pend.delete(id);
+  const call = hp.call(id, stream);
+  call.on('close', () => { viewers.delete(id); draw(); });
+  call.on('error', () => { viewers.delete(id); draw(); });
+  viewers.set(id, { conn: p.conn, call, nick: p.nick });
+  p.conn.send({ t: 'ok' });
+  call.peerConnection.addEventListener('connectionstatechange', () => applyBr(call));
+  applyBr(call);
+  draw();
+}
+
+function refuse(id) {
+  const p = pend.get(id) || viewers.get(id); if (!p) return;
+  try { p.conn.send({ t: 'no' }); } catch (e) {}
+  setTimeout(() => { try { p.conn.close(); p.call && p.call.close(); } catch (e) {} }, 300);
+  pend.delete(id); viewers.delete(id); draw();
+}
+
+async function applyBr(call) {
+  try {
+    const s = call.peerConnection.getSenders().find(x => x.track && x.track.kind === 'video'); if (!s) return;
+    const v = Array.from(viewers.values()).find(x => x.call === call);
+    const q = (v && v.q) || {};
+    const capH = stream.getVideoTracks()[0].getSettings().height || 0;
+    const max = +$('br').value || 6000;
+    const p = s.getParameters();
+    if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+    const e = p.encodings[0];
+    e.maxBitrate = Math.min(max, q.b || max) * 1000;
+    e.scaleResolutionDownBy = q.h && capH > q.h ? capH / q.h : 1;
+    if (q.f) e.maxFramerate = q.f; else delete e.maxFramerate;
+    p.degradationPreference = 'maintain-framerate';
+    await s.setParameters(p);
+  } catch (e) {}
+}
+
+['res', 'fps'].forEach(k => $(k).onchange = () => {
+  if (stream) stream.getVideoTracks()[0].applyConstraints(constraints()).then(() => viewers.forEach(v => applyBr(v.call))).catch(() => {});
+});
+$('br').onchange = () => viewers.forEach(v => applyBr(v.call));
+
+async function stats() {
+  const v = viewers.values().next().value;
+  if (!v) { $('stats').textContent = 'Aguardando espectadores…'; last = null; return; }
+  try {
+    const r = await v.call.peerConnection.getStats();
+    r.forEach(s => {
+      if (s.type === 'outbound-rtp' && s.kind === 'video') {
+        const kbps = last ? Math.round((s.bytesSent - last.b) * 8 / (s.timestamp - last.t)) : 0;
+        last = { b: s.bytesSent, t: s.timestamp };
+        $('stats').textContent = `${s.frameWidth || '?'}×${s.frameHeight || '?'} · ${Math.round(s.framesPerSecond || 0)} fps · ${kbps} kbps por espectador`;
+      }
+    });
+  } catch (e) {}
+}
+
+function row(list, nick, buttons) {
+  const li = document.createElement('li');
+  const n = document.createElement('span'); n.textContent = nick; li.appendChild(n);
+  const d = document.createElement('div');
+  buttons.forEach(([t, cls, fn]) => { const b = document.createElement('button'); b.textContent = t; b.className = cls; b.onclick = fn; d.appendChild(b); });
+  li.appendChild(d); list.appendChild(li);
+}
+function draw() {
+  const a = $('pend'), b = $('vw'); a.replaceChildren(); b.replaceChildren();
+  pend.forEach((p, id) => row(a, p.nick, [['Aceitar', '', () => accept(id)], ['Recusar', 'sec', () => refuse(id)]]));
+  viewers.forEach((p, id) => row(b, p.nick, [['Remover', 'sec', () => refuse(id)]]));
+}
+
+function stop() {
+  clearInterval(timer);
+  if (myId && topic) post({ t: 'off', id: myId });
+  myId = null;
+  $('pv').srcObject = null;
+  if (stream) stream.getTracks().forEach(t => t.stop());
+  if (hp) hp.destroy();
+  stream = hp = null; pend.clear(); viewers.clear(); draw();
+  $('live').classList.add('hide'); $('stop').classList.add('hide'); $('go').classList.remove('hide');
+  say('Transmissão encerrada.'); tag('Offline');
+}
+
+$('pvb').onclick = () => {
+  const pv = $('pv'), off = !pv.classList.contains('hide');
+  pv.classList.toggle('hide', off); pv.srcObject = off ? null : stream;
+  $('pvb').textContent = off ? 'Mostrar prévia' : 'Esconder prévia';
+};
+
+/* ---------- Espectador ---------- */
+function join(id) {
+  if (vp) vp.destroy();
+  const nick = $('nick').value.trim();
+  say('Conectando…');
+  vp = new Peer();
+  vp.on('open', () => {
+    const conn = vconn = vp.connect(id, { reliable: true });
+    conn.on('open', () => { conn.send({ t: 'hi', nick }); say('Aguardando o streamer aprovar…'); });
+    conn.on('data', d => {
+      if (d.t === 'ok') say('Aprovado. Carregando a transmissão…');
+      if (d.t === 'no') { say('O streamer recusou a entrada.', true); leave(); }
+      if (d.t === 'full') { say('A sala está cheia.', true); leave(); }
+    });
+    conn.on('close', () => { if (vp) { say('Conexão encerrada.'); leave(); } });
+  });
+  vp.on('call', call => {
+    call.answer();
+    call.on('stream', s => {
+      const v = $('v'); v.srcObject = s; $('stage').classList.remove('hide');
+      try { call.peerConnection.getReceivers().forEach(r => { r.jitterBufferTarget = 0; }); } catch (e) {}
+      tag('Assistindo', 1);
+      v.play().then(() => say('')).catch(() => { v.muted = true; v.play(); say('Clique no vídeo e ative o som.'); });
+    });
+    call.on('close', () => { say('A transmissão terminou.'); leave(); });
+  });
+  vp.on('error', e => {
+    if (e.type === 'peer-unavailable') { lives.delete(id); drawLives(); say('Essa live já acabou.', true); }
+    else say('Erro: ' + e.type, true);
+  });
+}
+
+function leave() {
+  const p = vp; vp = vconn = null;
+  if (p) p.destroy();
+  $('v').srcObject = null; $('stage').classList.add('hide'); foco(false);
+  if (document.fullscreenElement) document.exitFullscreen();
+  tag(stream ? 'Ao vivo' : 'Offline', !!stream);
+}
+$('leave').onclick = () => { leave(); say(''); };
+
+$('mt').onclick = () => { const v = $('v'); v.muted = !v.muted; if (!v.muted && v.volume === 0) v.volume = 0.5; };
+$('vol').oninput = e => { const v = $('v'); v.volume = +e.target.value; v.muted = v.volume === 0; };
+$('v').onvolumechange = () => { const v = $('v'); $('mt').textContent = v.muted ? 'Ativar som' : 'Mutar'; $('vol').value = v.muted ? 0 : v.volume; };
+$('q').onchange = e => {
+  const [h, f, b] = e.target.value.split(':').map(Number);
+  if (vconn && vconn.open) vconn.send({ t: 'q', h: h || 0, f: f || 0, b: b || 0 });
+};
+$('fs').onclick = () => document.fullscreenElement ? document.exitFullscreen() : $('stage').requestFullscreen().catch(() => {});
+if (!document.pictureInPictureEnabled) $('pip').classList.add('hide');
+$('pip').onclick = async () => {
+  try { document.pictureInPictureElement ? await document.exitPictureInPicture() : await $('v').requestPictureInPicture(); }
+  catch (e) { say('Mini player indisponível neste navegador.', true); }
+};
+function foco(on) { $('stage').classList.toggle('foco', on); document.body.classList.toggle('foco', on); }
+$('foco').onclick = () => foco(!$('stage').classList.contains('foco'));
+addEventListener('keydown', e => { if (e.key === 'Escape') foco(false); });
+$('v').ondblclick = () => $('fs').click();
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+</script>
+</body>
+</html>
