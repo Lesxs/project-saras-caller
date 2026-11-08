@@ -37,7 +37,7 @@ ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
 li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 12px;background:var(--in);border:1px solid var(--ln);border-radius:8px}
 li div{display:flex;gap:6px}
 #pv{width:100%;max-width:360px}
-#stats,#vst{white-space:pre-line}
+#stats,#vst,#hw{white-space:pre-line}
 #stage.foco #vst,#stage:fullscreen #vst{display:none}
 #stage{display:grid;gap:8px}
 video{width:100%;background:#000;border:1px solid var(--ln);border-radius:12px;max-height:80vh}
@@ -45,15 +45,14 @@ video{width:100%;background:#000;border:1px solid var(--ln);border-radius:12px;m
 .bar input[type=range]{width:110px;padding:0;accent-color:var(--ac)}
 .hide{display:none!important}
 #msg{min-height:1.4em}
-#stage:fullscreen{background:#000;display:flex;flex-direction:column;gap:0}
-#stage:fullscreen video{flex:1;min-height:0;max-height:none;border:0;border-radius:0;object-fit:contain}
-#stage:fullscreen .bar{border-radius:0}
+#stage:fullscreen{background:#000;display:block}
+#stage:fullscreen video,#stage.foco video{width:100%;height:100%;max-height:none;border:0;border-radius:0;object-fit:contain}
 body.foco{padding:0;overflow:hidden}
 body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){display:none}
 #stage.foco{position:fixed;inset:0;z-index:5;background:#000;gap:0}
-#stage.foco video{height:100%;max-height:none;border:0;border-radius:0;object-fit:contain}
-#stage.foco .bar{position:absolute;left:0;right:0;bottom:0;border-radius:0;opacity:0}
-#stage.foco:hover .bar,#stage.foco .bar:focus-within{opacity:1}
+#stage:fullscreen .bar,#stage.foco .bar{position:absolute;left:0;right:0;bottom:0;border-radius:0;transition:opacity .2s}
+#stage.idle .bar{opacity:0;pointer-events:none}
+#stage.idle:fullscreen,#stage.idle.foco{cursor:none}
 </style>
 </head>
 <body>
@@ -103,7 +102,7 @@ body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){disp
           <input id="max" type="number" min="1" max="10" value="4">
         </label>
         <label>Codec
-          <select id="cdc"><option value="H264" selected>H.264 (GPU)</option><option value="VP9">VP9</option><option value="AV1">AV1</option><option value="auto">Automático</option></select>
+          <select id="cdc"><option value="gpu" selected>Automático (GPU)</option><option value="H264">H.264</option><option value="VP9">VP9</option><option value="AV1">AV1</option><option value="auto">Navegador decide</option></select>
         </label>
         <label>Áudio
           <select id="asrc"><option value="win" selected>Somente a janela do jogo</option><option value="sys">Sistema inteiro</option><option value="none">Sem áudio</option></select>
@@ -112,6 +111,7 @@ body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){disp
         <button id="stop" class="bad hide">Parar</button>
       </div>
       <p class="mut">Escolha a tela ou janela e marque “compartilhar áudio” para enviar o som. Resolução, FPS e bitrate podem ser mudados durante a transmissão.</p>
+      <p id="hw" class="mut"></p>
 
       <div id="live" class="hide" style="display:grid;gap:12px">
         <div class="row"><button id="pvb" class="sec">Esconder prévia</button><span class="mut">Se você compartilha a tela inteira, a prévia aparece repetida dentro dela. Compartilhar só a janela do jogo evita isso.</span></div>
@@ -273,8 +273,13 @@ async function start() {
   });
 }
 
+const hw = {};
+function chosen() {
+  const c = $('cdc').value; if (c !== 'gpu') return c;
+  return ['H264', 'VP9', 'AV1'].find(k => hw[k]) || 'H264';
+}
 function pref(sdp) {
-  const c = $('cdc').value; if (c === 'auto') return sdp;
+  const c = chosen(); if (c === 'auto') return sdp;
   const L = sdp.split('\r\n'), mi = L.findIndex(l => l.startsWith('m=video')); if (mi < 0) return sdp;
   const want = [];
   L.forEach(l => { const m = l.match(/^a=rtpmap:(\d+) ([A-Za-z0-9]+)\//); if (m && m[2].toUpperCase() === c) want.push(m[1]); });
@@ -287,6 +292,34 @@ function pref(sdp) {
   L[mi] = parts.slice(0, 3).concat(want.filter(x => pts.includes(x)), pts.filter(x => !want.includes(x))).join(' ');
   return L.join('\r\n');
 }
+
+const CT = { H264: 'video/H264;level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640c34', VP9: 'video/VP9;profile-id=0', AV1: 'video/AV1' };
+const NM = { H264: 'H.264', VP9: 'VP9', AV1: 'AV1' };
+function gpuInfo() {
+  try {
+    const g = document.createElement('canvas').getContext('webgl'), r = g.getParameter(g.getExtension('WEBGL_debug_renderer_info').UNMASKED_RENDERER_WEBGL) || '';
+    const n = (r.replace(/^ANGLE \((.*)\)$/, '$1').split(',')[1] || r).replace(/\s*\(0x[0-9a-f]+\).*$/i, '').trim();
+    const e = /nvidia|geforce|rtx|gtx/i.test(r) ? 'NVENC (NVIDIA)' : /amd|radeon/i.test(r) ? 'AMF/VCN (AMD)' : /intel/i.test(r) ? 'Quick Sync (Intel)' : '';
+    return n ? { name: n, enc: e } : null;
+  } catch (e) { return null; }
+}
+async function probe() {
+  const mc = navigator.mediaCapabilities; if (!mc || !mc.encodingInfo) return;
+  const h = +$('res').value, f = +$('fps').value, b = (+$('br').value || 6000) * 1000, res = [];
+  for (const k of Object.keys(CT)) {
+    let ok = null;
+    try { ok = await mc.encodingInfo({ type: 'webrtc', video: { contentType: CT[k], width: Math.round(h * 16 / 9), height: h, bitrate: b, framerate: f } }); } catch (e) {}
+    const t = !ok || !ok.supported ? 'não suportado' : ok.powerEfficient ? 'GPU' : 'software';
+    hw[k] = t === 'GPU';
+    const o = $('cdc').querySelector('option[value="' + k + '"]'); if (o) o.textContent = NM[k] + ' (' + t + ')';
+    res.push(NM[k] + ' ' + (t === 'GPU' ? 'sim' : 'não'));
+  }
+  const og = $('cdc').querySelector('option[value="gpu"]'); if (og) og.textContent = 'Automático (GPU → ' + NM[chosen()] + ')';
+  const g = gpuInfo();
+  $('hw').textContent = 'Codificação por GPU neste PC: ' + res.join(' · ') + '\nCodec usado na transmissão: ' + (NM[chosen()] || 'definido pelo navegador') + (g ? '\nPlaca: ' + g.name + (g.enc ? ' · encoder de hardware provável: ' + g.enc : '') : '');
+}
+['res', 'fps', 'br', 'cdc'].forEach(k => $(k).addEventListener('change', probe));
+probe();
 
 function accept(id) {
   const p = pend.get(id); if (!p || !stream) return;
@@ -466,7 +499,15 @@ $('pip').onclick = async () => {
   try { document.pictureInPictureElement ? await document.exitPictureInPicture() : await $('v').requestPictureInPicture(); }
   catch (e) { say('Mini player indisponível neste navegador.', true); }
 };
-function foco(on) { $('stage').classList.toggle('foco', on); document.body.classList.toggle('foco', on); }
+let idleT;
+function wake() {
+  const st = $('stage'); st.classList.remove('idle'); clearTimeout(idleT);
+  if (document.fullscreenElement === st || st.classList.contains('foco')) idleT = setTimeout(() => st.classList.add('idle'), 2500);
+}
+['mousemove', 'pointerdown', 'touchstart'].forEach(e => $('stage').addEventListener(e, wake));
+document.addEventListener('keydown', wake);
+document.addEventListener('fullscreenchange', wake);
+function foco(on) { $('stage').classList.toggle('foco', on); document.body.classList.toggle('foco', on); wake(); }
 $('foco').onclick = () => foco(!$('stage').classList.contains('foco'));
 addEventListener('keydown', e => { if (e.key === 'Escape') foco(false); });
 $('v').ondblclick = () => $('fs').click();
