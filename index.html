@@ -301,7 +301,7 @@ button:disabled,select:disabled,input:disabled{opacity:.55;cursor:not-allowed}
 
 <div id="alert" class="hide" role="alertdialog" aria-live="assertive" aria-labelledby="altitle">
   <div class="alertbox">
-    <div class="ring"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></div>
+    <div class="ring"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="2" width="14" height="20" rx="7"/><path d="M12 2v6"/><path d="M12 5v1"/></svg></div>
     <h3 id="altitle">Pedido de entrada</h3>
     <p id="alnick"></p>
     <div class="row"><button id="alyes">Aceitar</button><button id="alno" class="sec">Recusar</button></div>
@@ -317,13 +317,43 @@ const say = (t, bad) => { $('msg').textContent = t || ''; $('msg').style.color =
 const tag = (t, on) => { $('tag').textContent = t; $('tag').classList.toggle('on', !!on); };
 const token = () => { const a = new Uint8Array(16); crypto.getRandomValues(a); return Array.from(a, b => b.toString(16).padStart(2, '0')).join(''); };
 const NTFY = 'https://ntfy.sh/';
+// STUN redundante melhora a descoberta de rotas; TURN não é incluído sem credenciais confiáveis.
+const RTC_CONFIG = { iceServers: [
+  { urls: 'stun:stun.cloudflare.com:3478' },
+  { urls: 'stun:stun.l.google.com:19302' },
+  { urls: 'stun:stun1.l.google.com:19302' }
+], iceCandidatePoolSize: 10 };
 let camBr = 900000, camH = 0, actx, alertTimer, titleTimer, alertBeeps = 0;
 const baseTitle = document.title;
 const WIN_AUDIO = (() => { const m = navigator.userAgent.match(/(?:Chrome|Chromium)\/(\d+)/); return !!m && +m[1] >= 141; })();
 if (!WIN_AUDIO) $('asrc').options[0].textContent = 'Somente a janela do jogo (não suportado neste navegador)';
 let hp, vp, stream, camStream, timer, last, fh = [], vconn, vcall, vtimer, vprev, vreportAt = 0, vfreezePending = 0, es, grp, topic, myId, guest = 0;
 const senderStatsPrev = new Map();
-let viewerTargetId = null, viewerNick = '', viewerReconnectTimer = null, viewerRetry = 0, viewerLeaving = false, captureInfo = 'Captura ainda não iniciada';
+let viewerTargetId = null, viewerNick = '', viewerReconnectTimer = null, viewerIceTimer = null, viewerRetry = 0, viewerLeaving = false, captureInfo = 'Captura ainda não iniciada';
+let streamerReconnectTimer = null, streamerReconnectAttempt = 0;
+let viewerHealth = { videoStalls: 0, audioStalls: 0, lastNotice: 0, trackTimer: null };
+function resetViewerHealth() { clearTimeout(viewerHealth.trackTimer); viewerHealth = { videoStalls: 0, audioStalls: 0, lastNotice: 0, trackTimer: null }; }
+function watchViewerTracks(mediaStream) {
+  resetViewerHealth();
+  const audio = mediaStream.getAudioTracks();
+  audio.forEach(track => {
+    track.addEventListener('mute', () => {
+      clearTimeout(viewerHealth.trackTimer);
+      viewerHealth.trackTimer = setTimeout(() => {
+        if (!viewerLeaving && vcall && track.muted && Date.now() - viewerHealth.lastNotice > 12000) {
+          viewerHealth.lastNotice = Date.now();
+          say('O áudio foi interrompido. Tentando recuperar a transmissão…', true);
+          scheduleViewerReconnect('O fluxo de áudio foi interrompido.');
+        }
+      }, 6000);
+    });
+    track.addEventListener('unmute', () => { clearTimeout(viewerHealth.trackTimer); viewerHealth.trackTimer = null; });
+    track.addEventListener('ended', () => { if (!viewerLeaving && vcall) scheduleViewerReconnect('O fluxo de áudio foi encerrado.'); });
+  });
+  mediaStream.getVideoTracks().forEach(track => {
+    track.addEventListener('ended', () => { if (!viewerLeaving && vcall) scheduleViewerReconnect('O fluxo de vídeo foi encerrado.'); });
+  });
+}
 const pend = new Map(), viewers = new Map(), lives = new Map();
 const post = o => fetch(NTFY + topic, { method: 'POST', body: JSON.stringify(o) }).catch(() => {});
 
@@ -415,8 +445,9 @@ async function start() {
   $('asrc').disabled = true; setCamUI();
 
   const id = 'sv' + token();
-  hp = new Peer(id);
+  hp = new Peer(id, { config: RTC_CONFIG });
   hp.on('open', () => {
+    streamerReconnectAttempt = 0; clearTimeout(streamerReconnectTimer); streamerReconnectTimer = null;
     if (myId === id) { say(''); return; }
     myId = id; lives.delete(id); drawLives();
     post({ t: 'on', id, name: $('nick').value.trim().slice(0, 20) || 'Streamer' });
@@ -457,10 +488,19 @@ async function start() {
       draw();
     });
   });
-  const rec = () => setTimeout(() => { if (hp && !hp.destroyed && hp.disconnected) hp.reconnect(); }, 2000);
-  hp.on('disconnected', () => { say('Conexão com o servidor caiu. Reconectando…'); rec(); });
+  const rec = () => {
+    if (streamerReconnectTimer || !hp || hp.destroyed) return;
+    const delays = [2000, 4000, 8000, 15000, 30000];
+    const delay = delays[Math.min(streamerReconnectAttempt++, delays.length - 1)];
+    say('Conexão de sinalização instável. Reconectando…');
+    streamerReconnectTimer = setTimeout(() => {
+      streamerReconnectTimer = null;
+      if (hp && !hp.destroyed && hp.disconnected) { try { hp.reconnect(); } catch (e) { rec(); } }
+    }, delay);
+  };
+  hp.on('disconnected', rec);
   hp.on('error', e => {
-    if (e.type === 'network') { say('Sem conexão com o servidor. Tentando reconectar…'); rec(); }
+    if (e.type === 'network' || e.type === 'socket-error' || e.type === 'socket-closed') rec();
     else say('Erro de conexão: ' + e.type, true);
   });
 }
@@ -590,7 +630,16 @@ function accept(id) {
   p.conn.send({ t: 'ok' });
   p.conn.send({ t: 'pos', pos: $('hpos').value });
   sendCam(id);
-  call.peerConnection.addEventListener('connectionstatechange', () => applyBr(call));
+  let recoveryNotified = false;
+  call.peerConnection.addEventListener('connectionstatechange', () => {
+    applyBr(call);
+    const state = call.peerConnection.connectionState;
+    if (state === 'connected') recoveryNotified = false;
+    if ((state === 'failed' || state === 'closed') && !recoveryNotified) {
+      recoveryNotified = true;
+      try { p.conn.send({ t: 'reconnect' }); } catch (e) {}
+    }
+  });
   applyBr(call);
   draw();
 }
@@ -716,7 +765,8 @@ async function stats() {
       else if (lim === 'bandwidth') why = 'Limite de banda';
       else if (src && capF > 0 && capF < (+$('fps').value || 60) * 0.9) why = 'Captura abaixo da meta';
       else if (encF > 0 && capF > 0 && encF < capF * 0.88) why = 'Codificação abaixo da captura';
-      else if (remote.lossRate > 0.035 || remote.dropRate > 0.12 || remote.rtt > 450) why = 'Problema no caminho até o espectador';
+      else if (remote.lossRate > 0.08 || remote.rtt > 700 || remote.jitter > 0.08) why = 'Rede instável: perda, latência ou jitter elevados';
+      else if (remote.lossRate > 0.035 || remote.dropRate > 0.12 || remote.rtt > 450 || remote.jitter > 0.035) why = 'Qualidade de rede oscilando';
       const bgp = document.visibilityState !== 'visible';
       const localText = `Captura ${Math.round(capF)} fps · codificação ${Math.round(encF)} fps · envio ${Math.round(sntF)} fps · ${encMs.toFixed(1)} ms/quadro`;
       const netText = `${kbps} kbps enviados${avail ? ` · banda estimada ${avail} kbps` : ''}${rtt ? ` · RTT ${rtt} ms` : ''} · limite ${lim}`;
@@ -742,9 +792,10 @@ async function stats() {
 async function vstats() {
   if (!vcall) return;
   try {
-    const r = await vcall.peerConnection.getStats(); let i, cp; const codecs = {};
+    const r = await vcall.peerConnection.getStats(); let i, a, cp; const codecs = {};
     r.forEach(s => {
       if (s.type === 'inbound-rtp' && s.kind === 'video') i = s;
+      else if (s.type === 'inbound-rtp' && s.kind === 'audio') a = s;
       else if (s.type === 'codec') codecs[s.id] = s;
       else if (s.type === 'candidate-pair' && s.nominated && s.state === 'succeeded' && (!cp || s.bytesReceived > cp.bytesReceived)) cp = s;
     });
@@ -752,7 +803,9 @@ async function vstats() {
     const now = {
       t: i.timestamp, rec: i.framesReceived || 0, dec: i.framesDecoded || 0,
       drp: i.framesDropped || 0, lost: i.packetsLost || 0,
-      packets: i.packetsReceived || 0, freezes: i.freezeCount || 0, bytes: i.bytesReceived || 0, jitter: Math.max(0, i.jitter || 0)
+      packets: i.packetsReceived || 0, freezes: i.freezeCount || 0, bytes: i.bytesReceived || 0, jitter: Math.max(0, i.jitter || 0),
+      audioPackets: a ? (a.packetsReceived || 0) : null, audioBytes: a ? (a.bytesReceived || 0) : null,
+      audioLost: a ? (a.packetsLost || 0) : null, audioJitter: a ? Math.max(0, a.jitter || 0) : 0
     };
     if (vprev) {
       const dt = Math.max(0.1, (now.t - vprev.t) / 1000);
@@ -767,18 +820,32 @@ async function vstats() {
       const jitter = now.jitter;
       const kbps = Math.round((now.bytes - vprev.bytes) * 8 / (now.t - vprev.t));
       const freezeDelta = Math.max(0, now.freezes - vprev.freezes); vfreezePending += freezeDelta;
+      const audioActive = a && (now.audioPackets > (vprev.audioPackets || 0) || now.audioBytes > (vprev.audioBytes || 0));
+      const audioExpected = $('v').srcObject && $('v').srcObject.getAudioTracks().some(t => t.readyState === 'live' && !t.muted);
+      // Só considera travamento depois de várias amostras, evitando reconexões por oscilações curtas.
+      viewerHealth.videoStalls = (recF < 1 && decF < 1 && vcall.peerConnection.connectionState === 'connected') ? viewerHealth.videoStalls + 1 : 0;
+      viewerHealth.audioStalls = (audioExpected && a && !audioActive) ? viewerHealth.audioStalls + 1 : 0;
+      if (viewerHealth.videoStalls >= 4 && Date.now() - viewerHealth.lastNotice > 15000) {
+        viewerHealth.lastNotice = Date.now(); viewerHealth.videoStalls = 0;
+        say('A imagem parou de chegar. Tentando recuperar a transmissão…', true);
+        scheduleViewerReconnect(audioActive ? 'O vídeo parou enquanto o áudio continuou.' : 'O fluxo de vídeo parou de chegar.');
+      } else if (viewerHealth.audioStalls >= 5 && recF > 2 && Date.now() - viewerHealth.lastNotice > 15000) {
+        viewerHealth.lastNotice = Date.now(); viewerHealth.audioStalls = 0;
+        say('O áudio parece ter parado. Tentando recuperar a transmissão…', true);
+        scheduleViewerReconnect('O fluxo de áudio parou enquanto o vídeo continuou.');
+      }
       $('vst').textContent = `Recebido ${Math.round(recF)} fps · decodificado ${Math.round(decF)} fps · ${kbps} kbps\n` +
         `Perda ${(100 * lossRate).toFixed(1)}% · descarte ${(100 * dropRate).toFixed(1)}% · jitter ${Math.round(jitter * 1000)} ms · congelamentos ${now.freezes}\n` +
-        `${((codecs[i.codecId] || {}).mimeType || '?').replace('video/', '')} · ${i.decoderImplementation || '?'}${i.powerEfficientDecoder ? ' (GPU)' : ''} · RTT ${Math.round(rtt)} ms`;
+        `${((codecs[i.codecId] || {}).mimeType || '?').replace('video/', '')} · ${i.decoderImplementation || '?'}${i.powerEfficientDecoder ? ' (GPU)' : ''} · RTT ${Math.round(rtt)} ms` +
+        (a ? `\nÁudio: jitter ${Math.round(now.audioJitter * 1000)} ms · perda ${Math.max(0, now.audioLost)} pacotes` : '');
       if (vconn && vconn.open && now.t - (vreportAt || 0) >= 3500) {
-        vconn.send({ t: 'qstats', recF, decF, lossRate, dropRate, rtt, jitter, freezes: vfreezePending });
+        vconn.send({ t: 'qstats', recF, decF, lossRate, dropRate, rtt, jitter, freezes: vfreezePending, audioJitter: now.audioJitter });
         vreportAt = now.t; vfreezePending = 0;
       }
     }
     vprev = now;
   } catch (e) {}
 }
-
 function row(list, nick, buttons) {
   const li = document.createElement('li');
   const n = document.createElement('span'); n.textContent = nick; li.appendChild(n);
@@ -834,7 +901,7 @@ function draw(newReq) {
 }
 
 function stop() {
-  clearInterval(timer);
+  clearInterval(timer); clearTimeout(streamerReconnectTimer); streamerReconnectTimer = null; streamerReconnectAttempt = 0;
   if (myId && topic) post({ t: 'off', id: myId });
   myId = null;
   $('pv').srcObject = null; closeCam();
@@ -878,9 +945,9 @@ function scheduleViewerReconnect(reason) {
 function connectViewer(id, nick) {
   if (vp) { try { vp.destroy(); } catch (e) {} }
   vp = vconn = vcall = null;
-  clearInterval(vtimer); vprev = null; vreportAt = 0; vfreezePending = 0;
+  clearInterval(vtimer); clearTimeout(viewerIceTimer); viewerIceTimer = null; vprev = null; vreportAt = 0; vfreezePending = 0; resetViewerHealth();
   say('Conectando…');
-  const peer = vp = new Peer();
+  const peer = vp = new Peer({ config: RTC_CONFIG });
   peer.on('open', () => {
     if (peer !== vp || viewerLeaving) return;
     const conn = vconn = peer.connect(id, { reliable: true });
@@ -891,12 +958,25 @@ function connectViewer(id, nick) {
       if (d.t === 'pos') setCamPos(d.pos);
       if (d.t === 'no') { say('O streamer recusou a entrada.', true); leave(); }
       if (d.t === 'full') { say('A sala está cheia.', true); leave(); }
+      if (d.t === 'reconnect') scheduleViewerReconnect('A conexão de vídeo precisa ser restabelecida.');
     });
     conn.on('close', () => { if (peer === vp && !viewerLeaving) scheduleViewerReconnect('A conexão de controle caiu.'); });
   });
   peer.on('call', call => {
     if (peer !== vp || viewerLeaving) { call.close(); return; }
     call.answer();
+    if (call.peerConnection) call.peerConnection.addEventListener('connectionstatechange', () => {
+      if (peer !== vp || viewerLeaving) return;
+      const state = call.peerConnection.connectionState;
+      if (state === 'connected') { clearTimeout(viewerIceTimer); viewerIceTimer = null; }
+      else if (state === 'failed') scheduleViewerReconnect('A rota de vídeo falhou.');
+      else if (state === 'disconnected' && !viewerIceTimer) {
+        viewerIceTimer = setTimeout(() => {
+          viewerIceTimer = null;
+          if (peer === vp && !viewerLeaving && call.peerConnection.connectionState === 'disconnected') scheduleViewerReconnect('A conexão de vídeo ficou instável.');
+        }, 5000);
+      }
+    });
     if (call.metadata && call.metadata.kind === 'cam') {
       call.on('stream', s => { const c = $('cv'); c.srcObject = s; c.classList.remove('hide'); $('camb').classList.remove('hide'); $('camposl').classList.remove('hide'); $('camb').textContent = 'Ocultar câmera'; c.play().catch(() => {}); });
       call.on('close', hideCam);
@@ -906,7 +986,7 @@ function connectViewer(id, nick) {
       if (peer !== vp) return;
       const v = $('v'); v.srcObject = s; $('stage').classList.remove('hide');
       tag('Assistindo', 1);
-      vcall = call; vprev = null; vreportAt = 0; vfreezePending = 0; clearInterval(vtimer); vtimer = setInterval(vstats, 2000);
+      vcall = call; vprev = null; vreportAt = 0; vfreezePending = 0; watchViewerTracks(s); clearInterval(vtimer); vtimer = setInterval(vstats, 2000);
       v.play().then(() => { say(''); viewerRetry = 0; }).catch(() => { v.muted = true; v.play(); say('Clique no vídeo e ative o som.'); });
     });
     call.on('close', () => { if (peer === vp && !viewerLeaving) scheduleViewerReconnect('A transmissão foi interrompida.'); });
@@ -932,9 +1012,9 @@ $('campos').onchange = e => setCamPos(e.target.value);
 function hideCam() { $('cv').srcObject = null; $('cv').classList.add('hide'); $('camb').classList.add('hide'); $('camposl').classList.add('hide'); }
 
 function leave() {
-  viewerLeaving = true; viewerTargetId = null; clearTimeout(viewerReconnectTimer); viewerReconnectTimer = null;
+  viewerLeaving = true; viewerTargetId = null; clearTimeout(viewerReconnectTimer); viewerReconnectTimer = null; clearTimeout(viewerIceTimer); viewerIceTimer = null;
   if (pipWin) pipWin.close();
-  const p = vp; vp = vconn = vcall = null; clearInterval(vtimer); vfreezePending = 0; $('vst').textContent = '';
+  const p = vp; vp = vconn = vcall = null; clearInterval(vtimer); resetViewerHealth(); vfreezePending = 0; $('vst').textContent = '';
   if (p) p.destroy();
   $('v').srcObject = null; hideCam();
   $('stage').classList.add('hide');
