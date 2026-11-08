@@ -8,9 +8,13 @@
 <meta name="theme-color" content="#141a30">
 <link rel="icon" href="icon-192.png">
 <style>
-:root{color-scheme:dark;--bg:#1e1f22;--pn:#2b2d31;--in:#1a1b1e;--ln:#41434a;--fg:#f2f3f5;--mut:#a3a6ad;--ac:#5865f2;--ac2:#4752c4;--ok:#23a55a;--bad:#f23f43}
+:root{color-scheme:dark;--bg:#0b0f24;--pn:rgba(24,29,58,.84);--in:rgba(9,12,30,.75);--ln:#303a6e;--fg:#f2f3f5;--mut:#9aa3c7;--ac:#5865f2;--ac2:#4752c4;--ok:#23a55a;--bad:#f23f43}
 *{box-sizing:border-box}
-body{margin:0;padding:16px;font:15px/1.45 "gg sans","Segoe UI",system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg)}
+html{min-height:100%;background:radial-gradient(1100px 650px at 50% -8%,#1b2352 0%,rgba(14,18,48,0) 70%) no-repeat fixed,var(--bg)}
+body{margin:0;padding:16px;font:15px/1.45 "gg sans","Segoe UI",system-ui,-apple-system,sans-serif;background:transparent;color:var(--fg)}
+#bg{position:fixed;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none;display:none}
+.fxbtn{position:absolute;top:10px;left:10px;font-size:12px;padding:3px 12px;border:1px solid var(--ln);border-radius:99px;color:var(--fg);background:rgba(12,14,24,.78);font-weight:500}
+.fxbtn:hover{border-color:var(--ac);background:rgba(12,14,24,.92)}
 main{max-width:900px;margin:0 auto;display:grid;gap:14px}
 section{display:grid;gap:14px}
 p{margin:0}
@@ -60,7 +64,7 @@ video{width:100%;background:#000;border:1px solid var(--ln);border-radius:12px;m
 #vwrap.pip #cv{width:26%;min-width:90px}
 #pcv{max-width:200px}
 #alert{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);padding:16px}
-.alertbox{background:var(--pn);border:2px solid var(--ac);border-radius:16px;padding:24px 28px;min-width:280px;max-width:90vw;text-align:center;display:grid;gap:12px;animation:glow 1.1s ease-in-out infinite}
+.alertbox{background:#161a36;border:2px solid var(--ac);border-radius:16px;padding:24px 28px;min-width:280px;max-width:90vw;text-align:center;display:grid;gap:12px;animation:glow 1.1s ease-in-out infinite}
 .alertbox h3{margin:0;font-size:18px}
 .alertbox .row{justify-content:center}
 .ring{color:var(--ac);display:grid;justify-items:center;animation:shake .9s ease-in-out infinite;transform-origin:50% 10%}
@@ -76,8 +80,9 @@ body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){disp
 </style>
 </head>
 <body>
+<canvas id="bg" aria-hidden="true"></canvas>
 <main>
-  <header><img src="banner.jpg" width="1600" height="455" alt="S.A.R.A.S"><h1>Project S.A.R.A.S Caller</h1><span id="tag" class="tag">Offline</span></header>
+  <header><img src="banner.jpg" width="1600" height="455" alt="S.A.R.A.S"><h1>Project S.A.R.A.S Caller</h1><button id="fx" class="fxbtn" type="button" aria-pressed="true">Fundo: ligado</button><span id="tag" class="tag">Offline</span></header>
   <p id="msg" class="mut"></p>
 
   <!-- Grupo -->
@@ -725,6 +730,92 @@ function foco(on) { if (on && pipWin) pipWin.close(); $('stage').classList.toggl
 $('foco').onclick = () => foco(!$('stage').classList.contains('foco'));
 addEventListener('keydown', e => { if (e.key === 'Escape') foco(false); });
 $('v').ondblclick = () => $('fs').click();
+
+/* ---------- Fundo animado: leve (30 fps, meia resolução) e pausa sozinho ao transmitir ou assistir ---------- */
+(() => {
+  const cv = $('bg'), cx = cv.getContext('2d'), SC = 0.5, WORDS = ['MOUSE', 'SI SENHOR', 'BSB', 'SOFÁ'];
+  const COL = ['91,101,242', '124,140,255', '79,180,255', '155,140,255'], CYCLE = 13, FONT = '800 {s}px system-ui, "Segoe UI", sans-serif';
+  let W = 0, H = 0, P = [], raf = 0, last = 0, t0 = 0, cyc = -1, phase = '', tm;
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let on = !reduce; try { const v = localStorage.getItem('fx'); if (v !== null) on = v === '1'; } catch (e) {}
+  const rnd = (a, b) => a + Math.random() * (b - a);
+
+  function size() {
+    W = Math.max(200, Math.round(innerWidth * SC)); H = Math.max(200, Math.round(innerHeight * SC));
+    cv.width = W; cv.height = H;
+    const n = Math.max(260, Math.min(520, Math.round(W * H / 900)));
+    P = Array.from({ length: n }, () => { const x = rnd(0, W), y = rnd(0, H); return { x, y, px: x, py: y, vx: 0, vy: 0, s: rnd(0.6, 1.4), c: COL[Math.floor(Math.random() * COL.length)], tx: -1, ty: -1 }; });
+    cyc = -1;
+  }
+
+  // pontos em grade regular que desenham a palavra (a grade lê muito melhor que pontos sorteados)
+  function targets(word, k) {
+    const o = document.createElement('canvas'); o.width = W; o.height = H;
+    const c = o.getContext('2d', { willReadFrequently: true });
+    const r = document.querySelector('main').getBoundingClientRect(), lm = r.left * SC, rm = W - r.right * SC;
+    const fit = avail => { c.font = FONT.replace('{s}', H * 0.34); const w = c.measureText(word).width; return w > avail ? H * 0.34 * avail / w : H * 0.34; };
+    let cxm = W / 2, fs = fit(W * 0.82);
+    // com tela larga, a palavra vai para a margem livre ao lado do conteúdo (se couber em tamanho legível)
+    const sides = [[lm, lm / 2], [rm, W - rm / 2]].filter(([m]) => fit(m * 0.9) >= H * 0.16);
+    if (sides.length) { const [m, x] = sides[k % sides.length]; cxm = x; fs = fit(m * 0.9); }
+    c.font = FONT.replace('{s}', fs); c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = '#fff'; c.fillText(word, cxm, H / 2);
+    const d = c.getImageData(0, 0, W, H).data;
+    let st = 2, pts;
+    for (; ; st++) {
+      pts = [];
+      for (let y = 0; y < H; y += st) for (let x = 0; x < W; x += st) if (d[(y * W + x) * 4 + 3] > 128) pts.push([x, y]);
+      if (pts.length <= P.length || st > 40) break;
+    }
+    return pts.slice(0, P.length);
+  }
+
+  function frame(ts) {
+    raf = requestAnimationFrame(frame);
+    if (ts - last < 33) return; last = ts;
+    const t = (ts - t0) / 1000, n = Math.floor(t / CYCLE), c = t % CYCLE;
+    if (n !== cyc) {
+      cyc = n; phase = '';
+      const T = targets(WORDS[n % WORDS.length], n), idx = P.map((_, i) => i).sort(() => Math.random() - 0.5);
+      P.forEach(p => { p.tx = -1; }); T.forEach((pt, i) => { const p = P[idx[i]]; p.tx = pt[0]; p.ty = pt[1]; });
+    }
+    const ph = c < 4.5 ? 'amb' : c < 11 ? 'word' : 'out';
+    if (ph === 'out' && phase !== 'out') P.forEach(p => { p.vx = rnd(-3, 3); p.vy = rnd(-3, 3); });
+    phase = ph;
+    cx.globalCompositeOperation = 'destination-out'; cx.fillStyle = 'rgba(0,0,0,' + (ph === 'word' ? 0.28 : 0.14) + ')'; cx.fillRect(0, 0, W, H);
+    cx.globalCompositeOperation = 'lighter'; cx.lineCap = 'round';
+    for (let i = 0; i < P.length; i++) {
+      const p = P[i], lock = ph === 'word' && p.tx >= 0; p.px = p.x; p.py = p.y;
+      if (lock) {
+        const k = c < 6.5 ? 0.07 : 0.14;
+        p.x += (p.tx - p.x) * k + Math.sin(t * 4 + i) * 0.35; p.y += (p.ty - p.y) * k + Math.cos(t * 3.3 + i) * 0.35;
+      } else {
+        const a = Math.sin(p.x * 0.004 + t * 0.3) + Math.cos(p.y * 0.005 - t * 0.22);
+        p.vx += (Math.cos(a) * 1.3 - p.vx) * 0.05; p.vy += (Math.sin(a) * 0.7 - p.vy) * 0.05;
+        p.x += p.vx * p.s; p.y += p.vy * p.s;
+        let w = false;
+        if (p.x < -10) { p.x += W + 20; w = true; } else if (p.x > W + 10) { p.x -= W + 20; w = true; }
+        if (p.y < -10) { p.y += H + 20; w = true; } else if (p.y > H + 10) { p.y -= H + 20; w = true; }
+        if (w) { p.px = p.x; p.py = p.y; }
+      }
+      cx.strokeStyle = 'rgba(' + p.c + ',' + (lock ? 0.95 : ph === 'word' ? 0.08 : 0.5) + ')'; cx.lineWidth = lock ? 2 : 1.4;
+      cx.beginPath(); cx.moveTo(p.px, p.py); cx.lineTo(p.x + (lock ? 1.5 : 0), p.y); cx.stroke();
+    }
+  }
+
+  // roda só quando a página está visível e você NÃO está transmitindo nem assistindo (protege o FPS)
+  const ok = () => on && !document.hidden && !stream && $('stage').classList.contains('hide') && !document.body.classList.contains('foco');
+  function check() {
+    const r = ok();
+    if (r && !raf) { if (!W) size(); cv.style.display = 'block'; t0 = performance.now(); last = 0; cyc = -1; raf = requestAnimationFrame(frame); }
+    else if (!r && raf) { cancelAnimationFrame(raf); raf = 0; cx.clearRect(0, 0, W, H); cv.style.display = 'none'; }
+  }
+  function label() { $('fx').textContent = on ? 'Fundo: ligado' : 'Fundo: desligado'; $('fx').setAttribute('aria-pressed', on); }
+  $('fx').onclick = () => { on = !on; try { localStorage.setItem('fx', on ? '1' : '0'); } catch (e) {} label(); check(); };
+  addEventListener('resize', () => { clearTimeout(tm); tm = setTimeout(() => { if (W) size(); }, 250); });
+  document.addEventListener('visibilitychange', check);
+  setInterval(check, 800);
+  label(); check();
+})();
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
 </body>
