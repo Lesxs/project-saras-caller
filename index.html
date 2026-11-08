@@ -183,7 +183,7 @@ button:disabled,select:disabled,input:disabled{opacity:.55;cursor:not-allowed}
       <button id="gcp" class="sec">Copiar código</button>
       <button id="gout" class="sec">Sair do grupo</button>
     </div>
-    <p class="mut">Combine o código uma vez com os amigos. Quem tem o código vê as lives do grupo, e você ainda aprova cada pessoa que pedir para entrar.</p>
+    <p class="mut">Combine o código uma vez com os amigos. Quem tem o código pode ver as lives do grupo. Cada transmissão pode ser pública (entrada automática) ou privada (com sua aprovação).</p>
   </div>
 
   <section id="app" class="hide">
@@ -211,7 +211,11 @@ button:disabled,select:disabled,input:disabled{opacity:.55;cursor:not-allowed}
         <label>Prioridade
           <select id="prio"><option value="fps" selected>Fluidez (FPS)</option><option value="res">Nitidez (resolução)</option></select>
         </label>
+        <label>Privacidade da live
+          <select id="visibility"><option value="private" selected>Privada · aprovar entrada</option><option value="public">Pública · entrada automática</option></select>
+        </label>
       </div>
+      <p class="mut helper-text">Na live pública, qualquer participante com o código deste grupo pode entrar automaticamente. Na privada, você aprova cada solicitação.</p>
 
       <details class="settings-disclosure">
         <summary>Configurações avançadas</summary>
@@ -328,8 +332,9 @@ const baseTitle = document.title;
 const WIN_AUDIO = (() => { const m = navigator.userAgent.match(/(?:Chrome|Chromium)\/(\d+)/); return !!m && +m[1] >= 141; })();
 if (!WIN_AUDIO) $('asrc').options[0].textContent = 'Somente a janela do jogo (não suportado neste navegador)';
 let hp, vp, stream, camStream, timer, last, fh = [], vconn, vcall, vtimer, vprev, vreportAt = 0, vfreezePending = 0, es, grp, topic, myId, guest = 0;
+let liveVisibility = 'private';
 const senderStatsPrev = new Map();
-let viewerTargetId = null, viewerNick = '', viewerReconnectTimer = null, viewerIceTimer = null, viewerRetry = 0, viewerLeaving = false, captureInfo = 'Captura ainda não iniciada';
+let viewerTargetId = null, viewerNick = '', viewerRequestedPublic = false, viewerReconnectTimer = null, viewerIceTimer = null, viewerRetry = 0, viewerLeaving = false, captureInfo = 'Captura ainda não iniciada';
 let streamerReconnectTimer = null, streamerReconnectAttempt = 0;
 let viewerHealth = { videoStalls: 0, audioStalls: 0, lastNotice: 0, trackTimer: null };
 function resetViewerHealth() { clearTimeout(viewerHealth.trackTimer); viewerHealth = { videoStalls: 0, audioStalls: 0, lastNotice: 0, trackTimer: null }; }
@@ -380,7 +385,7 @@ function subscribe() {
     try {
       const m = JSON.parse(e.data); if (m.event !== 'message') return;
       const d = JSON.parse(m.message);
-      if (d.t === 'on' && d.id !== myId) lives.set(d.id, { name: String(d.name || 'Live').slice(0, 20), at: m.time * 1000 });
+      if (d.t === 'on' && d.id !== myId) lives.set(d.id, { name: String(d.name || 'Live').slice(0, 20), visibility: d.visibility === 'public' ? 'public' : 'private', at: m.time * 1000 });
       else if (d.t === 'off') lives.delete(d.id);
       drawLives();
     } catch (x) {}
@@ -391,7 +396,10 @@ function ago(t) { const m = Math.max(1, Math.round((Date.now() - t) / 60000)); r
 function drawLives() {
   const ul = $('lv'); ul.replaceChildren();
   if (!lives.size) { const li = document.createElement('li'); li.textContent = 'Ninguém está transmitindo agora.'; li.style.color = 'var(--mut)'; ul.appendChild(li); return; }
-  lives.forEach((l, id) => row(ul, l.name + ' · ' + ago(l.at), [['Pedir para entrar', '', () => join(id)]]));
+  lives.forEach((l, id) => {
+    const isPublic = l.visibility === 'public';
+    row(ul, l.name + (isPublic ? ' · Pública · ' : ' · Privada · ') + ago(l.at), [[isPublic ? 'Entrar na live' : 'Pedir para entrar', '', () => join(id, isPublic)]]);
+  });
 }
 
 function leaveGroup() {
@@ -421,6 +429,7 @@ async function start() {
   if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
   if (actx && actx.state === 'suspended') actx.resume();
   if (!grp) return say('Entre em um grupo primeiro.', true);
+  liveVisibility = $('visibility').value === 'public' ? 'public' : 'private';
   const mode = $('asrc').value, raw = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
   const opts = { video: constraints(), audio: mode === 'none' || (mode === 'win' && !WIN_AUDIO) ? false : raw };
   if (mode === 'win' && WIN_AUDIO) opts.windowAudio = 'window';
@@ -450,7 +459,8 @@ async function start() {
     streamerReconnectAttempt = 0; clearTimeout(streamerReconnectTimer); streamerReconnectTimer = null;
     if (myId === id) { say(''); return; }
     myId = id; lives.delete(id); drawLives();
-    post({ t: 'on', id, name: $('nick').value.trim().slice(0, 20) || 'Streamer' });
+    post({ t: 'on', id, name: $('nick').value.trim().slice(0, 20) || 'Streamer', visibility: liveVisibility });
+    $('visibility').disabled = true;
     $('live').classList.remove('hide'); tag('Ao vivo', 1);
     $('go').classList.add('hide'); $('stop').classList.remove('hide');
     timer = setInterval(stats, 2000);
@@ -478,7 +488,8 @@ async function start() {
       if (!d || d.t !== 'hi' || pend.has(conn.peer) || viewers.has(conn.peer)) return;
       if (pend.size + viewers.size >= +$('max').value) { conn.send({ t: 'full' }); setTimeout(() => conn.close(), 300); return; }
       pend.set(conn.peer, { conn, nick: String(d.nick || '').trim().slice(0, 20) || 'Convidado ' + (++guest) });
-      draw(true);
+      if (liveVisibility === 'public') accept(conn.peer);
+      else draw(true);
     });
     conn.on('close', () => {
       pend.delete(conn.peer);
@@ -909,7 +920,7 @@ function stop() {
   if (hp) hp.destroy();
   stream = hp = null; fh = []; senderStatsPrev.clear(); pend.clear(); viewers.clear(); draw();
   $('live').classList.add('hide'); $('stop').classList.add('hide'); $('go').classList.remove('hide');
-  $('asrc').disabled = false;
+  $('asrc').disabled = false; $('visibility').disabled = false;
   say('Transmissão encerrada.'); tag('Offline');
 }
 
@@ -921,10 +932,11 @@ $('pvb').onclick = () => {
 };
 
 /* ---------- Espectador ---------- */
-function join(id) {
-  viewerTargetId = id; viewerNick = $('nick').value.trim(); viewerRetry = 0; viewerLeaving = false;
+function join(id, isPublic = false) {
+  viewerTargetId = id; viewerNick = $('nick').value.trim(); viewerRequestedPublic = !!isPublic; viewerRetry = 0; viewerLeaving = false;
   clearTimeout(viewerReconnectTimer);
-  connectViewer(id, viewerNick);
+  say(isPublic ? 'Entrando na live pública…' : 'Solicitando entrada na live privada…');
+  connectViewer(id, viewerNick, isPublic);
 }
 
 function scheduleViewerReconnect(reason) {
@@ -938,11 +950,11 @@ function scheduleViewerReconnect(reason) {
   say(`${reason || 'Conexão interrompida.'} Tentando reconectar (${viewerRetry}/5)…`, true);
   viewerReconnectTimer = setTimeout(() => {
     viewerReconnectTimer = null;
-    if (!viewerLeaving && viewerTargetId) connectViewer(viewerTargetId, viewerNick);
+    if (!viewerLeaving && viewerTargetId) connectViewer(viewerTargetId, viewerNick, viewerRequestedPublic);
   }, delay);
 }
 
-function connectViewer(id, nick) {
+function connectViewer(id, nick, isPublic = false) {
   if (vp) { try { vp.destroy(); } catch (e) {} }
   vp = vconn = vcall = null;
   clearInterval(vtimer); clearTimeout(viewerIceTimer); viewerIceTimer = null; vprev = null; vreportAt = 0; vfreezePending = 0; resetViewerHealth();
@@ -951,7 +963,7 @@ function connectViewer(id, nick) {
   peer.on('open', () => {
     if (peer !== vp || viewerLeaving) return;
     const conn = vconn = peer.connect(id, { reliable: true });
-    conn.on('open', () => { if (conn !== vconn) return; conn.send({ t: 'hi', nick }); say('Aguardando o streamer aprovar…'); });
+    conn.on('open', () => { if (conn !== vconn) return; conn.send({ t: 'hi', nick }); say(isPublic ? 'Conectando à live pública…' : 'Aguardando o streamer aprovar…'); });
     conn.on('data', d => {
       if (d.t === 'ok') { viewerRetry = 0; say('Aprovado. Carregando a transmissão…'); if (vconn && vconn.open) vconn.send({ t: 'q', auto: true }); }
       if (d.t === 'cam' && !d.on) hideCam();
@@ -1012,7 +1024,7 @@ $('campos').onchange = e => setCamPos(e.target.value);
 function hideCam() { $('cv').srcObject = null; $('cv').classList.add('hide'); $('camb').classList.add('hide'); $('camposl').classList.add('hide'); }
 
 function leave() {
-  viewerLeaving = true; viewerTargetId = null; clearTimeout(viewerReconnectTimer); viewerReconnectTimer = null; clearTimeout(viewerIceTimer); viewerIceTimer = null;
+  viewerLeaving = true; viewerTargetId = null; viewerRequestedPublic = false; clearTimeout(viewerReconnectTimer); viewerReconnectTimer = null; clearTimeout(viewerIceTimer); viewerIceTimer = null;
   if (pipWin) pipWin.close();
   const p = vp; vp = vconn = vcall = null; clearInterval(vtimer); resetViewerHealth(); vfreezePending = 0; $('vst').textContent = '';
   if (p) p.destroy();
