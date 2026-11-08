@@ -46,7 +46,12 @@ video{width:100%;background:#000;border:1px solid var(--ln);border-radius:12px;m
 .hide{display:none!important}
 #msg{min-height:1.4em}
 #stage:fullscreen{background:#000;display:block}
-#stage:fullscreen video,#stage.foco video{width:100%;height:100%;max-height:none;border:0;border-radius:0;object-fit:contain}
+#stage:fullscreen #v,#stage.foco #v{width:100%;height:100%;max-height:none;border:0;border-radius:0;object-fit:contain}
+#vwrap{position:relative}
+#stage:fullscreen #vwrap,#stage.foco #vwrap{height:100%}
+#cv{position:absolute;right:12px;bottom:12px;width:22%;min-width:140px;max-width:320px;height:auto;aspect-ratio:16/9;max-height:none;object-fit:cover;border:2px solid var(--ac);border-radius:10px}
+#stage:fullscreen #cv,#stage.foco #cv{bottom:64px}
+#pcv{max-width:200px}
 body.foco{padding:0;overflow:hidden}
 body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){display:none}
 #stage.foco{position:fixed;inset:0;z-index:5;background:#000;gap:0}
@@ -107,6 +112,16 @@ body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){disp
         <label>Áudio
           <select id="asrc"><option value="win" selected>Somente a janela do jogo</option><option value="sys">Sistema inteiro</option><option value="none">Sem áudio</option></select>
         </label>
+        <label>Prioridade
+          <select id="prio"><option value="fps" selected>Fluidez (FPS)</option><option value="res">Nitidez (resolução)</option></select>
+        </label>
+        <label>Câmera
+          <select id="cam"><option value="">Sem câmera</option><option value="default">Câmera padrão</option></select>
+        </label>
+        <label>Qualidade da câmera
+          <select id="camq"><option value="360">360p</option><option value="720" selected>720p</option><option value="1080">1080p</option><option value="max">Nativa (máxima da câmera)</option></select>
+        </label>
+        <button id="camlist" class="sec">Listar câmeras</button>
         <button id="go">Streamar</button>
         <button id="stop" class="bad hide">Parar</button>
       </div>
@@ -116,6 +131,8 @@ body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){disp
       <div id="live" class="hide" style="display:grid;gap:12px">
         <div class="row"><button id="pvb" class="sec">Esconder prévia</button><span class="mut">Se você compartilha a tela inteira, a prévia aparece repetida dentro dela. Compartilhar só a janela do jogo evita isso.</span></div>
         <video id="pv" muted autoplay playsinline></video>
+        <video id="pcv" class="hide" muted autoplay playsinline></video>
+        <p id="camres" class="mut"></p>
         <p id="stats" class="mut"></p>
         <h2>Pedidos de entrada</h2><ul id="pend"></ul>
         <h2>Assistindo</h2><ul id="vw"></ul>
@@ -123,7 +140,7 @@ body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){disp
     </div>
 
     <div id="stage" class="hide">
-      <video id="v" autoplay playsinline></video>
+      <div id="vwrap"><video id="v" autoplay playsinline></video><video id="cv" class="hide" muted autoplay playsinline></video></div>
       <div class="bar">
         <button id="mt" class="sec">Mutar</button>
         <input id="vol" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume">
@@ -139,6 +156,7 @@ body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){disp
         <button id="pip" class="sec">Mini player</button>
         <button id="foco" class="sec">Modo foco</button>
         <button id="fs" class="sec">Tela cheia</button>
+        <button id="camb" class="sec hide">Ocultar câmera</button>
         <button id="leave" class="bad">Sair</button>
       </div>
       <p id="vst" class="mut"></p>
@@ -153,9 +171,10 @@ const say = (t, bad) => { $('msg').textContent = t || ''; $('msg').style.color =
 const tag = (t, on) => { $('tag').textContent = t; $('tag').classList.toggle('on', !!on); };
 const token = () => { const a = new Uint8Array(16); crypto.getRandomValues(a); return Array.from(a, b => b.toString(16).padStart(2, '0')).join(''); };
 const NTFY = 'https://ntfy.sh/';
+let camBr = 900000, camH = 0;
 const WIN_AUDIO = (() => { const m = navigator.userAgent.match(/(?:Chrome|Chromium)\/(\d+)/); return !!m && +m[1] >= 141; })();
 if (!WIN_AUDIO) $('asrc').options[0].textContent = 'Somente a janela do jogo (não suportado neste navegador)';
-let hp, vp, stream, timer, last, vconn, vcall, vtimer, vprev, es, grp, topic, myId, guest = 0;
+let hp, vp, stream, camStream, timer, last, fh = [], vconn, vcall, vtimer, vprev, es, grp, topic, myId, guest = 0;
 const pend = new Map(), viewers = new Map(), lives = new Map();
 const post = o => fetch(NTFY + topic, { method: 'POST', body: JSON.stringify(o) }).catch(() => {});
 
@@ -237,8 +256,21 @@ async function start() {
   vt.contentHint = 'motion';
   vt.onended = stop;
   $('pv').srcObject = stream; $('pv').classList.remove('hide'); $('pvb').textContent = 'Esconder prévia';
+  const cs = $('cam').value;
+  if (cs) {
+    try {
+      const q = $('camq').value;
+      const dim = q === 'max' ? { width: { ideal: 7680 }, height: { ideal: 4320 } } : { width: { ideal: Math.round(+q * 16 / 9) }, height: { ideal: +q } };
+      camStream = await navigator.mediaDevices.getUserMedia({ video: { ...(cs !== 'default' ? { deviceId: { exact: cs } } : {}), ...dim, frameRate: { ideal: 30 } }, audio: false });
+      const st = camStream.getVideoTracks()[0].getSettings(), fps = Math.round(st.frameRate || 30);
+      camH = st.height || 0;
+      camBr = (q === 'max' ? Math.min(8000, Math.max(2500, Math.round((st.width || 0) * camH * fps * 0.07 / 1000))) : { 360: 900, 720: 2500, 1080: 5000 }[q]) * 1000;
+      $('camres').textContent = `Câmera: ${st.width}×${st.height} · ${fps} fps · até ${Math.round(camBr / 1000)} kbps por espectador` + (q !== 'max' && camH < +q * 0.95 ? ` (a câmera não oferece ${q}p)` : '');
+      $('pcv').srcObject = camStream; $('pcv').classList.remove('hide');
+    } catch (e) { camStream = null; note = (note ? note + ' ' : '') + 'Não consegui abrir a câmera (permissão negada ou em uso). A transmissão segue só com a tela.'; }
+  }
   say(note, !!note);
-  $('asrc').disabled = true;
+  $('asrc').disabled = true; $('cam').disabled = true; $('camq').disabled = true; $('camlist').disabled = true;
 
   const id = 'sv' + token();
   hp = new Peer(id);
@@ -321,6 +353,18 @@ async function probe() {
 ['res', 'fps', 'br', 'cdc'].forEach(k => $(k).addEventListener('change', probe));
 probe();
 
+$('camlist').onclick = async () => {
+  try { (await navigator.mediaDevices.getUserMedia({ video: true })).getTracks().forEach(t => t.stop()); }
+  catch (e) { return say('Permita o acesso à câmera para listar os dispositivos.', true); }
+  const sel = $('cam'), cur = sel.value;
+  Array.from(sel.options).filter(o => o.dataset.d).forEach(o => o.remove());
+  (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput').forEach(d => {
+    const o = document.createElement('option'); o.value = d.deviceId; o.dataset.d = 1; o.textContent = d.label || 'Câmera'; sel.appendChild(o);
+  });
+  sel.value = Array.from(sel.options).some(o => o.value === cur) ? cur : '';
+  say('Câmeras listadas. Dispositivos de vídeo, como a câmera virtual do OBS, também aparecem aqui.');
+};
+
 function accept(id) {
   const p = pend.get(id); if (!p || !stream) return;
   pend.delete(id);
@@ -328,6 +372,12 @@ function accept(id) {
   call.on('close', () => { viewers.delete(id); draw(); });
   call.on('error', () => { viewers.delete(id); draw(); });
   viewers.set(id, { conn: p.conn, call, nick: p.nick });
+  if (camStream) {
+    const cc = hp.call(id, camStream, { metadata: { kind: 'cam' }, ...(camH > 480 ? { sdpTransform: pref } : {}) });
+    viewers.get(id).cam = cc;
+    cc.peerConnection.addEventListener('connectionstatechange', () => applyCam(cc));
+    applyCam(cc);
+  }
   p.conn.send({ t: 'ok' });
   call.peerConnection.addEventListener('connectionstatechange', () => applyBr(call));
   applyBr(call);
@@ -337,8 +387,17 @@ function accept(id) {
 function refuse(id) {
   const p = pend.get(id) || viewers.get(id); if (!p) return;
   try { p.conn.send({ t: 'no' }); } catch (e) {}
-  setTimeout(() => { try { p.conn.close(); p.call && p.call.close(); } catch (e) {} }, 300);
+  setTimeout(() => { try { p.conn.close(); p.call && p.call.close(); p.cam && p.cam.close(); } catch (e) {} }, 300);
   pend.delete(id); viewers.delete(id); draw();
+}
+
+async function applyCam(call) {
+  try {
+    const s = call.peerConnection.getSenders().find(x => x.track && x.track.kind === 'video'); if (!s) return;
+    const p = s.getParameters(); if (!p.encodings || !p.encodings.length) p.encodings = [{}];
+    p.encodings[0].maxBitrate = camBr; p.encodings[0].maxFramerate = 30;
+    await s.setParameters(p);
+  } catch (e) {}
 }
 
 async function applyBr(call) {
@@ -354,7 +413,7 @@ async function applyBr(call) {
     e.maxBitrate = Math.min(max, q.b || max) * 1000;
     e.scaleResolutionDownBy = q.h && capH > q.h ? capH / q.h : 1;
     if (q.f) e.maxFramerate = q.f; else delete e.maxFramerate;
-    p.degradationPreference = 'maintain-framerate';
+    p.degradationPreference = $('prio').value === 'res' ? 'maintain-resolution' : 'maintain-framerate';
     await s.setParameters(p);
   } catch (e) {}
 }
@@ -363,6 +422,7 @@ async function applyBr(call) {
   if (stream) stream.getVideoTracks()[0].applyConstraints(constraints()).then(() => viewers.forEach(v => applyBr(v.call))).catch(() => {});
 });
 $('br').onchange = () => viewers.forEach(v => applyBr(v.call));
+$('prio').onchange = () => viewers.forEach(v => applyBr(v.call));
 
 async function stats() {
   const v = viewers.values().next().value;
@@ -384,13 +444,16 @@ async function stats() {
       const encMs = de > 0 ? (now.ms - last.ms) / de * 1000 : 0, kbps = Math.round((now.b - last.b) * 8 / (now.t - last.t));
       const lim = o.qualityLimitationReason || 'none', avail = cp && cp.availableOutgoingBitrate ? Math.round(cp.availableOutgoingBitrate / 1000) : 0;
       const cod = ((codecs[o.codecId] || {}).mimeType || '?').replace('video/', '');
+      fh.push(capF); if (fh.length > 30) fh.shift();
+      const bgp = document.visibilityState !== 'visible';
+      const bg = bgp ? ' A página está em segundo plano e o navegador pode reduzir a prioridade dela: deixe a janela visível (outro monitor) e desligue o modo de eficiência.' : '';
       let why = 'OK, sem gargalo aparente.';
-      if (src && capF < goal * 0.9) why = `CAPTURA: o navegador recebe só ${Math.round(capF)} fps da janela. Causas comuns: GPU saturada pelo jogo ou jogo em tela cheia exclusiva (use janela sem bordas).`;
+      if (src && capF < goal * 0.9) why = `CAPTURA: o navegador recebe só ${Math.round(capF)} fps da janela. Causas comuns: GPU saturada pelo jogo ou jogo em tela cheia exclusiva (use janela sem bordas).${bg}`;
       else if (lim === 'cpu' || encMs > 1000 / goal * 0.8 || (src && encF < capF * 0.9)) why = `CODIFICAÇÃO: ${encMs.toFixed(1)} ms por quadro (limite de ${(1000 / goal).toFixed(1)} ms). ${o.powerEfficientEncoder ? 'O encoder já é de GPU.' : 'O encoder não é de GPU: troque o codec.'}`;
       else if (lim === 'bandwidth' || (avail && avail < (+$('br').value || 6000) * 0.8)) why = `REDE: banda estimada de ${avail} kbps, menor que o bitrate pedido.`;
       $('stats').textContent = `${o.frameWidth || '?'}×${o.frameHeight || '?'} · capturado ${Math.round(capF)} fps · codificado ${Math.round(encF)} · enviado ${Math.round(sntF)} · descartados ${drop} em ${Math.round(dt)} s\n` +
         `${cod} · ${o.encoderImplementation || '?'}${o.powerEfficientEncoder ? ' (GPU)' : ''} · ${encMs.toFixed(1)} ms/quadro · ${kbps} kbps · limite: ${{ none: 'nenhum', cpu: 'CPU', bandwidth: 'banda' }[lim] || lim}` +
-        `${avail ? ' · banda ' + avail + ' kbps' : ''}${cp && cp.currentRoundTripTime ? ' · RTT ' + Math.round(cp.currentRoundTripTime * 1000) + ' ms' : ''}\nDiagnóstico: ${why}`;
+        `${avail ? ' · banda ' + avail + ' kbps' : ''}${cp && cp.currentRoundTripTime ? ' · RTT ' + Math.round(cp.currentRoundTripTime * 1000) + ' ms' : ''}\nEstabilidade de captura (60 s): mín ${Math.round(Math.min(...fh))} · média ${Math.round(fh.reduce((a, b) => a + b, 0) / fh.length)} · máx ${Math.round(Math.max(...fh))} fps · página ${bgp ? 'em segundo plano' : 'visível'}\nDiagnóstico: ${why}`;
     }
     last = now;
   } catch (e) {}
@@ -429,10 +492,12 @@ function stop() {
   clearInterval(timer);
   if (myId && topic) post({ t: 'off', id: myId });
   myId = null;
-  $('pv').srcObject = null;
+  $('pv').srcObject = null; $('pcv').srcObject = null; $('pcv').classList.add('hide');
+  if (camStream) camStream.getTracks().forEach(t => t.stop());
+  camStream = null; $('camres').textContent = ''; $('cam').disabled = false; $('camq').disabled = false; $('camlist').disabled = false;
   if (stream) stream.getTracks().forEach(t => t.stop());
   if (hp) hp.destroy();
-  stream = hp = null; pend.clear(); viewers.clear(); draw();
+  stream = hp = null; fh = []; pend.clear(); viewers.clear(); draw();
   $('live').classList.add('hide'); $('stop').classList.add('hide'); $('go').classList.remove('hide');
   $('asrc').disabled = false;
   say('Transmissão encerrada.'); tag('Offline');
@@ -441,6 +506,7 @@ function stop() {
 $('pvb').onclick = () => {
   const pv = $('pv'), off = !pv.classList.contains('hide');
   pv.classList.toggle('hide', off); pv.srcObject = off ? null : stream;
+  if (camStream) { $('pcv').classList.toggle('hide', off); $('pcv').srcObject = off ? null : camStream; }
   $('pvb').textContent = off ? 'Mostrar prévia' : 'Esconder prévia';
 };
 
@@ -462,6 +528,11 @@ function join(id) {
   });
   vp.on('call', call => {
     call.answer();
+    if (call.metadata && call.metadata.kind === 'cam') {
+      call.on('stream', s => { const c = $('cv'); c.srcObject = s; c.classList.remove('hide'); $('camb').classList.remove('hide'); $('camb').textContent = 'Ocultar câmera'; c.play().catch(() => {}); });
+      call.on('close', () => { $('cv').srcObject = null; $('cv').classList.add('hide'); $('camb').classList.add('hide'); });
+      return;
+    }
     call.on('stream', s => {
       const v = $('v'); v.srcObject = s; $('stage').classList.remove('hide');
       try { call.peerConnection.getReceivers().forEach(r => { r.jitterBufferTarget = 0; }); } catch (e) {}
@@ -480,11 +551,13 @@ function join(id) {
 function leave() {
   const p = vp; vp = vconn = vcall = null; clearInterval(vtimer); $('vst').textContent = '';
   if (p) p.destroy();
-  $('v').srcObject = null; $('stage').classList.add('hide'); foco(false);
+  $('v').srcObject = null; $('cv').srcObject = null; $('cv').classList.add('hide'); $('camb').classList.add('hide');
+  $('stage').classList.add('hide'); foco(false);
   if (document.fullscreenElement) document.exitFullscreen();
   tag(stream ? 'Ao vivo' : 'Offline', !!stream);
 }
 $('leave').onclick = () => { leave(); say(''); };
+$('camb').onclick = () => { const hid = $('cv').classList.toggle('hide'); $('camb').textContent = hid ? 'Mostrar câmera' : 'Ocultar câmera'; };
 
 $('mt').onclick = () => { const v = $('v'); v.muted = !v.muted; if (!v.muted && v.volume === 0) v.volume = 0.5; };
 $('vol').oninput = e => { const v = $('v'); v.volume = +e.target.value; v.muted = v.volume === 0; };
