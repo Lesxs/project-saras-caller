@@ -37,6 +37,8 @@ ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
 li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 12px;background:var(--in);border:1px solid var(--ln);border-radius:8px}
 li div{display:flex;gap:6px}
 #pv{width:100%;max-width:360px}
+#stats,#vst{white-space:pre-line}
+#stage.foco #vst,#stage:fullscreen #vst{display:none}
 #stage{display:grid;gap:8px}
 video{width:100%;background:#000;border:1px solid var(--ln);border-radius:12px;max-height:80vh}
 .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--pn);border:1px solid var(--ln);border-radius:12px;padding:8px 12px}
@@ -139,6 +141,7 @@ body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){disp
         <button id="fs" class="sec">Tela cheia</button>
         <button id="leave" class="bad">Sair</button>
       </div>
+      <p id="vst" class="mut"></p>
     </div>
   </section>
 </main>
@@ -152,7 +155,7 @@ const token = () => { const a = new Uint8Array(16); crypto.getRandomValues(a); r
 const NTFY = 'https://ntfy.sh/';
 const WIN_AUDIO = (() => { const m = navigator.userAgent.match(/(?:Chrome|Chromium)\/(\d+)/); return !!m && +m[1] >= 141; })();
 if (!WIN_AUDIO) $('asrc').options[0].textContent = 'Somente a janela do jogo (não suportado neste navegador)';
-let hp, vp, stream, timer, last, vconn, es, grp, topic, myId, guest = 0;
+let hp, vp, stream, timer, last, vconn, vcall, vtimer, vprev, es, grp, topic, myId, guest = 0;
 const pend = new Map(), viewers = new Map(), lives = new Map();
 const post = o => fetch(NTFY + topic, { method: 'POST', body: JSON.stringify(o) }).catch(() => {});
 
@@ -275,6 +278,10 @@ function pref(sdp) {
   const L = sdp.split('\r\n'), mi = L.findIndex(l => l.startsWith('m=video')); if (mi < 0) return sdp;
   const want = [];
   L.forEach(l => { const m = l.match(/^a=rtpmap:(\d+) ([A-Za-z0-9]+)\//); if (m && m[2].toUpperCase() === c) want.push(m[1]); });
+  const fm = {}; L.forEach(l => { const m = l.match(/^a=fmtp:(\d+) (.*)/); if (m) fm[m[1]] = m[2]; });
+  const rank = pt => { const f = fm[pt] || '', pl = (f.match(/profile-level-id=([0-9a-fA-F]{6})/) || [])[1] || '', pf = pl.slice(0, 2).toLowerCase();
+    return (/packetization-mode=1/.test(f) ? 100 : 0) + (pf === '64' ? 30 : pf === '4d' ? 20 : pf === '42' ? 10 : 0) + (parseInt(pl.slice(4), 16) || 0) / 100; };
+  if (c === 'H264') want.sort((a, b) => rank(b) - rank(a));
   const parts = L[mi].split(' '), pts = parts.slice(3);
   if (!want.length) return sdp;
   L[mi] = parts.slice(0, 3).concat(want.filter(x => pts.includes(x)), pts.filter(x => !want.includes(x))).join(' ');
@@ -329,14 +336,46 @@ async function stats() {
   if (!v) { $('stats').textContent = 'Aguardando espectadores…'; last = null; return; }
   try {
     const r = await v.call.peerConnection.getStats();
+    let o, src, cp; const codecs = {};
     r.forEach(s => {
-      if (s.type === 'outbound-rtp' && s.kind === 'video') {
-        const kbps = last ? Math.round((s.bytesSent - last.b) * 8 / (s.timestamp - last.t)) : 0;
-        last = { b: s.bytesSent, t: s.timestamp };
-        const lim = { none: 'nenhum', cpu: 'CPU', bandwidth: 'banda' }[s.qualityLimitationReason] || s.qualityLimitationReason || '?';
-        $('stats').textContent = `${s.frameWidth || '?'}×${s.frameHeight || '?'} · ${Math.round(s.framesPerSecond || 0)} fps · ${kbps} kbps por espectador · encoder: ${s.encoderImplementation || '?'} · limite: ${lim}`;
-      }
+      if (s.type === 'outbound-rtp' && s.kind === 'video') o = s;
+      else if (s.type === 'media-source' && s.kind === 'video') src = s;
+      else if (s.type === 'codec') codecs[s.id] = s;
+      else if (s.type === 'candidate-pair' && s.nominated && s.state === 'succeeded' && (!cp || s.bytesSent > cp.bytesSent)) cp = s;
     });
+    if (!o) return;
+    const goal = +$('fps').value, now = { t: o.timestamp, cap: src ? src.frames : 0, enc: o.framesEncoded || 0, snt: o.framesSent || 0, ms: o.totalEncodeTime || 0, b: o.bytesSent || 0 };
+    if (last) {
+      const dt = (now.t - last.t) / 1000, dc = now.cap - last.cap, de = now.enc - last.enc;
+      const capF = dc / dt, encF = de / dt, sntF = (now.snt - last.snt) / dt, drop = Math.max(0, dc - de);
+      const encMs = de > 0 ? (now.ms - last.ms) / de * 1000 : 0, kbps = Math.round((now.b - last.b) * 8 / (now.t - last.t));
+      const lim = o.qualityLimitationReason || 'none', avail = cp && cp.availableOutgoingBitrate ? Math.round(cp.availableOutgoingBitrate / 1000) : 0;
+      const cod = ((codecs[o.codecId] || {}).mimeType || '?').replace('video/', '');
+      let why = 'OK, sem gargalo aparente.';
+      if (src && capF < goal * 0.9) why = `CAPTURA: o navegador recebe só ${Math.round(capF)} fps da janela. Causas comuns: GPU saturada pelo jogo ou jogo em tela cheia exclusiva (use janela sem bordas).`;
+      else if (lim === 'cpu' || encMs > 1000 / goal * 0.8 || (src && encF < capF * 0.9)) why = `CODIFICAÇÃO: ${encMs.toFixed(1)} ms por quadro (limite de ${(1000 / goal).toFixed(1)} ms). ${o.powerEfficientEncoder ? 'O encoder já é de GPU.' : 'O encoder não é de GPU: troque o codec.'}`;
+      else if (lim === 'bandwidth' || (avail && avail < (+$('br').value || 6000) * 0.8)) why = `REDE: banda estimada de ${avail} kbps, menor que o bitrate pedido.`;
+      $('stats').textContent = `${o.frameWidth || '?'}×${o.frameHeight || '?'} · capturado ${Math.round(capF)} fps · codificado ${Math.round(encF)} · enviado ${Math.round(sntF)} · descartados ${drop} em ${Math.round(dt)} s\n` +
+        `${cod} · ${o.encoderImplementation || '?'}${o.powerEfficientEncoder ? ' (GPU)' : ''} · ${encMs.toFixed(1)} ms/quadro · ${kbps} kbps · limite: ${{ none: 'nenhum', cpu: 'CPU', bandwidth: 'banda' }[lim] || lim}` +
+        `${avail ? ' · banda ' + avail + ' kbps' : ''}${cp && cp.currentRoundTripTime ? ' · RTT ' + Math.round(cp.currentRoundTripTime * 1000) + ' ms' : ''}\nDiagnóstico: ${why}`;
+    }
+    last = now;
+  } catch (e) {}
+}
+
+async function vstats() {
+  if (!vcall) return;
+  try {
+    const r = await vcall.peerConnection.getStats(); let i; const codecs = {};
+    r.forEach(s => { if (s.type === 'inbound-rtp' && s.kind === 'video') i = s; else if (s.type === 'codec') codecs[s.id] = s; });
+    if (!i) return;
+    const now = { t: i.timestamp, rec: i.framesReceived || 0, dec: i.framesDecoded || 0, drp: i.framesDropped || 0, lost: i.packetsLost || 0 };
+    if (vprev) {
+      const dt = (now.t - vprev.t) / 1000;
+      $('vst').textContent = `Recebido ${Math.round((now.rec - vprev.rec) / dt)} fps · decodificado ${Math.round((now.dec - vprev.dec) / dt)} fps · descartados ${now.drp - vprev.drp} · pacotes perdidos ${now.lost - vprev.lost} · congelamentos ${i.freezeCount || 0}\n` +
+        `${((codecs[i.codecId] || {}).mimeType || '?').replace('video/', '')} · ${i.decoderImplementation || '?'}${i.powerEfficientDecoder ? ' (GPU)' : ''}`;
+    }
+    vprev = now;
   } catch (e) {}
 }
 
@@ -394,6 +433,7 @@ function join(id) {
       const v = $('v'); v.srcObject = s; $('stage').classList.remove('hide');
       try { call.peerConnection.getReceivers().forEach(r => { r.jitterBufferTarget = 0; }); } catch (e) {}
       tag('Assistindo', 1);
+      vcall = call; vprev = null; clearInterval(vtimer); vtimer = setInterval(vstats, 2000);
       v.play().then(() => say('')).catch(() => { v.muted = true; v.play(); say('Clique no vídeo e ative o som.'); });
     });
     call.on('close', () => { say('A transmissão terminou.'); leave(); });
@@ -405,7 +445,7 @@ function join(id) {
 }
 
 function leave() {
-  const p = vp; vp = vconn = null;
+  const p = vp; vp = vconn = vcall = null; clearInterval(vtimer); $('vst').textContent = '';
   if (p) p.destroy();
   $('v').srcObject = null; $('stage').classList.add('hide'); foco(false);
   if (document.fullscreenElement) document.exitFullscreen();
