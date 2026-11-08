@@ -43,7 +43,7 @@ li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding
 li div{display:flex;gap:6px}
 #pv{width:100%;max-width:360px}
 #stats,#vst,#hw{white-space:pre-line}
-#stage.foco #vst,#stage:fullscreen #vst{display:none}
+#stage:fullscreen #vst{display:none}
 #stage{display:grid;gap:8px}
 video{width:100%;background:#000;border:1px solid var(--ln);border-radius:12px;max-height:80vh}
 .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--pn);border:1px solid var(--ln);border-radius:12px;padding:8px 12px}
@@ -51,15 +51,15 @@ video{width:100%;background:#000;border:1px solid var(--ln);border-radius:12px;m
 .hide{display:none!important}
 #msg{min-height:1.4em}
 #stage:fullscreen{background:#000;display:block}
-#stage:fullscreen #v,#stage.foco #v{width:100%;height:100%;max-height:none;border:0;border-radius:0;object-fit:contain}
+#stage:fullscreen #v{width:100%;height:100%;max-height:none;border:0;border-radius:0;object-fit:contain}
 #vwrap{position:relative}
-#stage:fullscreen #vwrap,#stage.foco #vwrap{height:100%}
+#stage:fullscreen #vwrap{height:100%}
 #cv{position:absolute;width:22%;min-width:140px;max-width:320px;height:auto;aspect-ratio:16/9;max-height:none;object-fit:cover;border:2px solid var(--ac);border-radius:10px}
 #vwrap.c-br #cv{right:12px;bottom:12px;left:auto;top:auto}
 #vwrap.c-bl #cv{left:12px;bottom:12px;right:auto;top:auto}
 #vwrap.c-tr #cv{right:12px;top:12px;left:auto;bottom:auto}
 #vwrap.c-tl #cv{left:12px;top:12px;right:auto;bottom:auto}
-#stage:fullscreen #vwrap.c-br #cv,#stage:fullscreen #vwrap.c-bl #cv,#stage.foco #vwrap.c-br #cv,#stage.foco #vwrap.c-bl #cv{bottom:64px}
+#stage:fullscreen:not(.idle) #vwrap.c-br #cv,#stage:fullscreen:not(.idle) #vwrap.c-bl #cv{bottom:64px}
 #vwrap.pip{width:100vw;height:100vh}
 #vwrap.pip #v{width:100%;height:100%;max-height:none;border:0;border-radius:0;object-fit:contain}
 #vwrap.pip #cv{width:26%;min-width:90px}
@@ -72,12 +72,9 @@ video{width:100%;background:#000;border:1px solid var(--ln);border-radius:12px;m
 @keyframes glow{0%,100%{box-shadow:0 0 12px 2px rgba(88,101,242,.5)}50%{box-shadow:0 0 38px 12px rgba(88,101,242,.95)}}
 @keyframes shake{0%,100%{transform:rotate(0)}20%{transform:rotate(-14deg)}40%{transform:rotate(12deg)}60%{transform:rotate(-8deg)}80%{transform:rotate(6deg)}}
 @media (prefers-reduced-motion:reduce){.alertbox,.ring{animation:none}.alertbox{box-shadow:0 0 28px 8px rgba(88,101,242,.8)}}
-body.foco{padding:0;overflow:hidden}
-body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){display:none}
-#stage.foco{position:fixed;inset:0;z-index:5;background:#000;gap:0}
-#stage:fullscreen .bar,#stage.foco .bar{position:absolute;left:0;right:0;bottom:0;border-radius:0;transition:opacity .2s}
-#stage.idle .bar{opacity:0;pointer-events:none}
-#stage.idle:fullscreen,#stage.idle.foco{cursor:none}
+#stage:fullscreen .bar{position:absolute;left:0;right:0;bottom:0;z-index:2;border-radius:0;transition:opacity .2s}
+#stage.idle .bar{opacity:0;visibility:hidden;pointer-events:none}
+#stage.idle:fullscreen{cursor:none}
 </style>
 </head>
 <body>
@@ -179,7 +176,6 @@ body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){disp
           </select>
         </label>
         <button id="pip" class="sec">Mini player</button>
-        <button id="foco" class="sec">Modo foco</button>
         <button id="fs" class="sec">Tela cheia</button>
         <label id="camposl" class="hide" style="display:flex;align-items:center;gap:6px">Câmera
           <select id="campos"><option value="tl">Esquerda acima</option><option value="bl">Esquerda abaixo</option><option value="tr">Direita acima</option><option value="br" selected>Direita abaixo</option></select>
@@ -684,7 +680,7 @@ function leave() {
   const p = vp; vp = vconn = vcall = null; clearInterval(vtimer); $('vst').textContent = '';
   if (p) p.destroy();
   $('v').srcObject = null; hideCam();
-  $('stage').classList.add('hide'); foco(false);
+  $('stage').classList.add('hide');
   if (document.fullscreenElement) document.exitFullscreen();
   tag(stream ? 'Ao vivo' : 'Offline', !!stream);
 }
@@ -727,9 +723,27 @@ $('pip').onclick = async () => {
   if (document.pictureInPictureElement) { await document.exitPictureInPicture(); return; }
   openPip();
 };
-function foco(on) { if (on && pipWin) pipWin.close(); $('stage').classList.toggle('foco', on); document.body.classList.toggle('foco', on); wake(); }
-$('foco').onclick = () => foco(!$('stage').classList.contains('foco'));
-addEventListener('keydown', e => { if (e.key === 'Escape') foco(false); });
+let controlsTimer = null;
+function showFullscreenControls() {
+  const stage = $('stage');
+  if (!document.fullscreenElement || document.fullscreenElement !== stage) return;
+  stage.classList.remove('idle');
+  clearTimeout(controlsTimer);
+  controlsTimer = setTimeout(() => {
+    if (document.fullscreenElement === stage) stage.classList.add('idle');
+  }, 2500);
+}
+document.addEventListener('fullscreenchange', () => {
+  clearTimeout(controlsTimer);
+  if (document.fullscreenElement === $('stage')) showFullscreenControls();
+  else $('stage').classList.remove('idle');
+});
+$('stage').addEventListener('mousemove', showFullscreenControls);
+$('stage').addEventListener('pointermove', showFullscreenControls);
+$('stage').addEventListener('pointerdown', showFullscreenControls);
+addEventListener('keydown', e => {
+  if (document.fullscreenElement === $('stage')) showFullscreenControls();
+});
 $('v').ondblclick = () => $('fs').click();
 
 /* ---------- Fundo animado: leve (30 fps, meia resolução) e pausa sozinho ao transmitir ou assistir ---------- */
@@ -804,7 +818,7 @@ $('v').ondblclick = () => $('fs').click();
   }
 
   // roda só quando a página está visível e você NÃO está transmitindo nem assistindo (protege o FPS)
-  const ok = () => on && !document.hidden && !stream && $('stage').classList.contains('hide') && !document.body.classList.contains('foco');
+  const ok = () => on && !document.hidden && !stream && $('stage').classList.contains('hide');
   function check() {
     const r = ok();
     if (r && !raf) { if (!W) size(); cv.style.display = 'block'; t0 = performance.now(); last = 0; cyc = -1; raf = requestAnimationFrame(frame); }
