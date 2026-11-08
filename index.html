@@ -122,7 +122,7 @@ video{width:100%;background:#000;border:1px solid var(--ln);border-radius:12px;m
           <input id="br" type="number" min="500" max="30000" step="500" value="6000">
         </label>
         <label>Máx. espectadores
-          <input id="max" type="number" min="1" max="10" value="4">
+          <input id="max" type="number" min="1" max="10" value="5">
         </label>
         <label>Codec
           <select id="cdc"><option value="gpu" selected>Automático (GPU)</option><option value="H264">H.264</option><option value="VP9">VP9</option><option value="AV1">AV1</option><option value="auto">Navegador decide</option></select>
@@ -168,7 +168,8 @@ video{width:100%;background:#000;border:1px solid var(--ln);border-radius:12px;m
         <input id="vol" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume">
         <label style="display:flex;align-items:center;gap:6px">Qualidade
           <select id="q">
-            <option value="0">Original</option>
+            <option value="auto" selected>Automática (equilíbrio)</option>
+            <option value="0">Original (sem limite)</option>
             <option value="720:60:3500">720p 60 fps</option>
             <option value="720:30:2500">720p 30 fps</option>
             <option value="480:30:1200">480p 30 fps</option>
@@ -210,7 +211,7 @@ let camBr = 900000, camH = 0, actx, alertTimer, titleTimer, alertBeeps = 0;
 const baseTitle = document.title;
 const WIN_AUDIO = (() => { const m = navigator.userAgent.match(/(?:Chrome|Chromium)\/(\d+)/); return !!m && +m[1] >= 141; })();
 if (!WIN_AUDIO) $('asrc').options[0].textContent = 'Somente a janela do jogo (não suportado neste navegador)';
-let hp, vp, stream, camStream, timer, last, fh = [], vconn, vcall, vtimer, vprev, es, grp, topic, myId, guest = 0;
+let hp, vp, stream, camStream, timer, last, fh = [], vconn, vcall, vtimer, vprev, vreportAt = 0, vfreezePending = 0, es, grp, topic, myId, guest = 0;
 const pend = new Map(), viewers = new Map(), lives = new Map();
 const post = o => fetch(NTFY + topic, { method: 'POST', body: JSON.stringify(o) }).catch(() => {});
 
@@ -310,11 +311,22 @@ async function start() {
   });
   hp.on('connection', conn => {
     conn.on('data', d => {
-      if (d && d.t === 'q' && viewers.has(conn.peer)) {
-        const v = viewers.get(conn.peer), n = x => Math.max(0, Math.min(+x || 0, 100000));
-        v.q = { h: Math.min(n(d.h), 2160), f: Math.min(n(d.f), 60), b: n(d.b) };
-        applyBr(v.call);
-        return;
+      if (d && viewers.has(conn.peer)) {
+        const v = viewers.get(conn.peer);
+        if (d.t === 'q') {
+          if (d.auto) { v.auto = true; v.q = null; v.tierIndex = 0; v.badSamples = 0; v.goodSamples = 0; }
+          else {
+            const n = x => Math.max(0, Math.min(+x || 0, 100000));
+            v.auto = false;
+            v.q = { h: Math.min(n(d.h), 2160), f: Math.min(n(d.f), 60), b: n(d.b) };
+          }
+          applyBr(v.call);
+          return;
+        }
+        if (d.t === 'qstats' && v.auto) {
+          adaptViewer(v, d);
+          return;
+        }
       }
       if (!d || d.t !== 'hi' || pend.has(conn.peer) || viewers.has(conn.peer)) return;
       if (pend.size + viewers.size >= +$('max').value) { conn.send({ t: 'full' }); setTimeout(() => conn.close(), 300); return; }
@@ -452,7 +464,7 @@ function accept(id) {
   const call = hp.call(id, stream, { sdpTransform: pref });
   call.on('close', () => { viewers.delete(id); draw(); });
   call.on('error', () => { viewers.delete(id); draw(); });
-  viewers.set(id, { conn: p.conn, call, nick: p.nick });
+  viewers.set(id, { conn: p.conn, call, nick: p.nick, auto: true, q: null, tierIndex: 0, badSamples: 0, goodSamples: 0 });
   p.conn.send({ t: 'ok' });
   p.conn.send({ t: 'pos', pos: $('hpos').value });
   sendCam(id);
@@ -477,26 +489,66 @@ async function applyCam(call) {
   } catch (e) {}
 }
 
+function adaptiveProfiles() {
+  const maxH = +$('res').value || 1080, maxF = +$('fps').value || 60;
+  const all = [
+    { h: 1440, f: 60, b: 10000 },
+    { h: 1440, f: 30, b: 6500 },
+    { h: 1080, f: 60, b: 6000 },
+    { h: 1080, f: 30, b: 4000 },
+    { h: 720, f: 60, b: 4000 },
+    { h: 720, f: 30, b: 2500 },
+    { h: 540, f: 30, b: 1500 },
+    { h: 480, f: 30, b: 1000 }
+  ];
+  const allowed = all.filter(x => x.h <= maxH && x.f <= maxF);
+  return allowed.length ? allowed : [{ h: Math.min(maxH, 480), f: Math.min(maxF, 30), b: 800 }];
+}
+
+function adaptViewer(v, d) {
+  const profiles = adaptiveProfiles();
+  v.tierIndex = Math.max(0, Math.min(v.tierIndex || 0, profiles.length - 1));
+  const p = profiles[v.tierIndex];
+  const recF = Math.max(0, +d.recF || 0), decF = Math.max(0, +d.decF || 0), loss = Math.max(0, +d.lossRate || 0);
+  const drop = Math.max(0, +d.dropRate || 0), rtt = Math.max(0, +d.rtt || 0);
+  const jitter = Math.max(0, +d.jitter || 0), freezes = Math.max(0, +d.freezes || 0);
+  const weak = (decF < p.f * 0.84 || recF < p.f * 0.84) || loss > 0.035 || drop > 0.12 || rtt > 450 || jitter > 0.055 || freezes > 0;
+  const strong = decF >= p.f * 0.94 && recF >= p.f * 0.94 && loss < 0.012 && drop < 0.035 && (!rtt || rtt < 280) && jitter < 0.03 && freezes === 0;
+  if (weak) {
+    v.badSamples = (v.badSamples || 0) + 1; v.goodSamples = 0;
+    if (v.badSamples >= 2 && v.tierIndex < profiles.length - 1) {
+      v.tierIndex++; v.badSamples = 0; applyBr(v.call);
+    }
+  } else if (strong) {
+    v.goodSamples = (v.goodSamples || 0) + 1; v.badSamples = 0;
+    if (v.goodSamples >= 4 && v.tierIndex > 0) {
+      v.tierIndex--; v.goodSamples = 0; applyBr(v.call);
+    }
+  } else {
+    v.badSamples = 0; v.goodSamples = 0;
+  }
+}
+
 async function applyBr(call) {
   try {
     const s = call.peerConnection.getSenders().find(x => x.track && x.track.kind === 'video'); if (!s) return;
     const v = Array.from(viewers.values()).find(x => x.call === call);
-    const q = (v && v.q) || {};
     const capH = stream.getVideoTracks()[0].getSettings().height || 0;
     const max = +$('br').value || 6000;
+    const q = v && v.auto ? adaptiveProfiles()[v.tierIndex || 0] : (v && v.q) || {};
     const p = s.getParameters();
     if (!p.encodings || !p.encodings.length) p.encodings = [{}];
     const e = p.encodings[0];
     e.maxBitrate = Math.min(max, q.b || max) * 1000;
     e.scaleResolutionDownBy = q.h && capH > q.h ? capH / q.h : 1;
     if (q.f) e.maxFramerate = q.f; else delete e.maxFramerate;
-    p.degradationPreference = $('prio').value === 'res' ? 'maintain-resolution' : 'maintain-framerate';
+    p.degradationPreference = v && v.auto ? 'balanced' : ($('prio').value === 'res' ? 'maintain-resolution' : 'maintain-framerate');
     await s.setParameters(p);
   } catch (e) {}
 }
 
 ['res', 'fps'].forEach(k => $(k).onchange = () => {
-  if (stream) stream.getVideoTracks()[0].applyConstraints(constraints()).then(() => viewers.forEach(v => applyBr(v.call))).catch(() => {});
+  if (stream) stream.getVideoTracks()[0].applyConstraints(constraints()).then(() => viewers.forEach(v => { v.tierIndex = 0; applyBr(v.call); })).catch(() => {});
 });
 $('br').onchange = () => viewers.forEach(v => applyBr(v.call));
 $('prio').onchange = () => viewers.forEach(v => applyBr(v.call));
@@ -539,14 +591,36 @@ async function stats() {
 async function vstats() {
   if (!vcall) return;
   try {
-    const r = await vcall.peerConnection.getStats(); let i; const codecs = {};
-    r.forEach(s => { if (s.type === 'inbound-rtp' && s.kind === 'video') i = s; else if (s.type === 'codec') codecs[s.id] = s; });
+    const r = await vcall.peerConnection.getStats(); let i, cp; const codecs = {};
+    r.forEach(s => {
+      if (s.type === 'inbound-rtp' && s.kind === 'video') i = s;
+      else if (s.type === 'codec') codecs[s.id] = s;
+      else if (s.type === 'candidate-pair' && s.nominated && s.state === 'succeeded' && (!cp || s.bytesReceived > cp.bytesReceived)) cp = s;
+    });
     if (!i) return;
-    const now = { t: i.timestamp, rec: i.framesReceived || 0, dec: i.framesDecoded || 0, drp: i.framesDropped || 0, lost: i.packetsLost || 0 };
+    const now = {
+      t: i.timestamp, rec: i.framesReceived || 0, dec: i.framesDecoded || 0,
+      drp: i.framesDropped || 0, lost: i.packetsLost || 0,
+      packets: i.packetsReceived || 0, freezes: i.freezeCount || 0
+    };
     if (vprev) {
-      const dt = (now.t - vprev.t) / 1000;
-      $('vst').textContent = `Recebido ${Math.round((now.rec - vprev.rec) / dt)} fps · decodificado ${Math.round((now.dec - vprev.dec) / dt)} fps · descartados ${now.drp - vprev.drp} · pacotes perdidos ${now.lost - vprev.lost} · congelamentos ${i.freezeCount || 0}\n` +
-        `${((codecs[i.codecId] || {}).mimeType || '?').replace('video/', '')} · ${i.decoderImplementation || '?'}${i.powerEfficientDecoder ? ' (GPU)' : ''}`;
+      const dt = Math.max(0.1, (now.t - vprev.t) / 1000);
+      const recF = Math.max(0, (now.rec - vprev.rec) / dt);
+      const decF = Math.max(0, (now.dec - vprev.dec) / dt);
+      const dropDelta = Math.max(0, now.drp - vprev.drp);
+      const packetDelta = Math.max(0, now.packets - vprev.packets);
+      const lostDelta = Math.max(0, now.lost - vprev.lost);
+      const lossRate = lostDelta / Math.max(1, packetDelta + lostDelta);
+      const dropRate = dropDelta / Math.max(1, now.rec - vprev.rec);
+      const rtt = cp && cp.currentRoundTripTime ? cp.currentRoundTripTime * 1000 : 0;
+      const jitter = Math.max(0, i.jitter || 0);
+      const freezeDelta = Math.max(0, now.freezes - vprev.freezes); vfreezePending += freezeDelta;
+      $('vst').textContent = `Recebido ${Math.round(recF)} fps · decodificado ${Math.round(decF)} fps · descartados ${dropDelta} · pacotes perdidos ${lostDelta} · congelamentos ${now.freezes}\n` +
+        `${((codecs[i.codecId] || {}).mimeType || '?').replace('video/', '')} · ${i.decoderImplementation || '?'}${i.powerEfficientDecoder ? ' (GPU)' : ''} · RTT ${Math.round(rtt)} ms`;
+      if (vconn && vconn.open && now.t - (vreportAt || 0) >= 3500) {
+        vconn.send({ t: 'qstats', recF, decF, lossRate, dropRate, rtt, jitter, freezes: vfreezePending });
+        vreportAt = now.t; vfreezePending = 0;
+      }
     }
     vprev = now;
   } catch (e) {}
@@ -636,7 +710,7 @@ function join(id) {
     const conn = vconn = vp.connect(id, { reliable: true });
     conn.on('open', () => { conn.send({ t: 'hi', nick }); say('Aguardando o streamer aprovar…'); });
     conn.on('data', d => {
-      if (d.t === 'ok') say('Aprovado. Carregando a transmissão…');
+      if (d.t === 'ok') { say('Aprovado. Carregando a transmissão…'); if (vconn && vconn.open) vconn.send({ t: 'q', auto: true }); }
       if (d.t === 'cam' && !d.on) hideCam();
       if (d.t === 'pos') setCamPos(d.pos);
       if (d.t === 'no') { say('O streamer recusou a entrada.', true); leave(); }
@@ -653,9 +727,8 @@ function join(id) {
     }
     call.on('stream', s => {
       const v = $('v'); v.srcObject = s; $('stage').classList.remove('hide');
-      try { call.peerConnection.getReceivers().forEach(r => { r.jitterBufferTarget = 0; }); } catch (e) {}
       tag('Assistindo', 1);
-      vcall = call; vprev = null; clearInterval(vtimer); vtimer = setInterval(vstats, 2000);
+      vcall = call; vprev = null; vreportAt = 0; vfreezePending = 0; clearInterval(vtimer); vtimer = setInterval(vstats, 2000);
       v.play().then(() => say('')).catch(() => { v.muted = true; v.play(); say('Clique no vídeo e ative o som.'); });
     });
     call.on('close', () => { say('A transmissão terminou.'); leave(); });
@@ -677,7 +750,7 @@ function hideCam() { $('cv').srcObject = null; $('cv').classList.add('hide'); $(
 
 function leave() {
   if (pipWin) pipWin.close();
-  const p = vp; vp = vconn = vcall = null; clearInterval(vtimer); $('vst').textContent = '';
+  const p = vp; vp = vconn = vcall = null; clearInterval(vtimer); vfreezePending = 0; $('vst').textContent = '';
   if (p) p.destroy();
   $('v').srcObject = null; hideCam();
   $('stage').classList.add('hide');
@@ -691,8 +764,10 @@ $('mt').onclick = () => { const v = $('v'); v.muted = !v.muted; if (!v.muted && 
 $('vol').oninput = e => { const v = $('v'); v.volume = +e.target.value; v.muted = v.volume === 0; };
 $('v').onvolumechange = () => { const v = $('v'); $('mt').textContent = v.muted ? 'Ativar som' : 'Mutar'; $('vol').value = v.muted ? 0 : v.volume; };
 $('q').onchange = e => {
+  if (!vconn || !vconn.open) return;
+  if (e.target.value === 'auto') { vconn.send({ t: 'q', auto: true }); return; }
   const [h, f, b] = e.target.value.split(':').map(Number);
-  if (vconn && vconn.open) vconn.send({ t: 'q', h: h || 0, f: f || 0, b: b || 0 });
+  vconn.send({ t: 'q', h: h || 0, f: f || 0, b: b || 0, auto: false });
 };
 $('fs').onclick = () => pipWin ? pipWin.close() : document.fullscreenElement ? document.exitFullscreen() : $('stage').requestFullscreen().catch(() => {});
 if (!document.pictureInPictureEnabled && !('documentPictureInPicture' in window)) $('pip').classList.add('hide');
