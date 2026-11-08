@@ -100,6 +100,12 @@ body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){disp
         <label>Máx. espectadores
           <input id="max" type="number" min="1" max="10" value="4">
         </label>
+        <label>Codec
+          <select id="cdc"><option value="H264" selected>H.264 (GPU)</option><option value="VP9">VP9</option><option value="AV1">AV1</option><option value="auto">Automático</option></select>
+        </label>
+        <label>Áudio
+          <select id="asrc"><option value="win" selected>Somente a janela do jogo</option><option value="sys">Sistema inteiro</option><option value="none">Sem áudio</option></select>
+        </label>
         <button id="go">Streamar</button>
         <button id="stop" class="bad hide">Parar</button>
       </div>
@@ -144,6 +150,8 @@ const say = (t, bad) => { $('msg').textContent = t || ''; $('msg').style.color =
 const tag = (t, on) => { $('tag').textContent = t; $('tag').classList.toggle('on', !!on); };
 const token = () => { const a = new Uint8Array(16); crypto.getRandomValues(a); return Array.from(a, b => b.toString(16).padStart(2, '0')).join(''); };
 const NTFY = 'https://ntfy.sh/';
+const WIN_AUDIO = (() => { const m = navigator.userAgent.match(/(?:Chrome|Chromium)\/(\d+)/); return !!m && +m[1] >= 141; })();
+if (!WIN_AUDIO) $('asrc').options[0].textContent = 'Somente a janela do jogo (não suportado neste navegador)';
 let hp, vp, stream, timer, last, vconn, es, grp, topic, myId, guest = 0;
 const pend = new Map(), viewers = new Map(), lives = new Map();
 const post = o => fetch(NTFY + topic, { method: 'POST', body: JSON.stringify(o) }).catch(() => {});
@@ -210,19 +218,29 @@ $('go').onclick = start; $('stop').onclick = stop;
 
 async function start() {
   if (!grp) return say('Entre em um grupo primeiro.', true);
-  try {
-    stream = await navigator.mediaDevices.getDisplayMedia({ video: constraints(), audio: true });
-  } catch (e) { return say('Captura cancelada.'); }
+  const mode = $('asrc').value, raw = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+  const opts = { video: constraints(), audio: mode === 'none' || (mode === 'win' && !WIN_AUDIO) ? false : raw };
+  if (mode === 'win' && WIN_AUDIO) opts.windowAudio = 'window';
+  if (mode === 'sys') opts.windowAudio = 'system';
+  try { stream = await navigator.mediaDevices.getDisplayMedia(opts); } catch (e) { return say('Captura cancelada.'); }
+  let note = '';
+  const surf = stream.getVideoTracks()[0].getSettings().displaySurface, at = stream.getAudioTracks();
+  if (mode === 'win') {
+    if (!WIN_AUDIO) note = 'Este navegador não suporta capturar só o áudio da janela (precisa de Chrome, Edge ou Brave 141 ou mais novo). Transmitindo sem áudio.';
+    else if (surf === 'monitor') { at.forEach(t => { stream.removeTrack(t); t.stop(); }); note = 'O áudio só da janela exige escolher uma janela, não a tela inteira. Transmitindo sem áudio.'; }
+    else if (!at.length) note = 'O navegador não ofereceu o áudio dessa janela. Na seleção, marque a opção de compartilhar o áudio.';
+  } else if (mode === 'sys' && !at.length) note = 'Sem áudio: na seleção, marque “compartilhar áudio”.';
   const vt = stream.getVideoTracks()[0];
   vt.contentHint = 'motion';
   vt.onended = stop;
   $('pv').srcObject = stream; $('pv').classList.remove('hide'); $('pvb').textContent = 'Esconder prévia';
-  if (!stream.getAudioTracks().length) say('Sem áudio: marque “compartilhar áudio do sistema” ao escolher a tela.');
-  else say('');
+  say(note, !!note);
+  $('asrc').disabled = true;
 
   const id = 'sv' + token();
   hp = new Peer(id);
   hp.on('open', () => {
+    if (myId === id) { say(''); return; }
     myId = id; lives.delete(id); drawLives();
     post({ t: 'on', id, name: $('nick').value.trim().slice(0, 20) || 'Streamer' });
     $('live').classList.remove('hide'); tag('Ao vivo', 1);
@@ -244,13 +262,29 @@ async function start() {
     });
     conn.on('close', () => { pend.delete(conn.peer); draw(); });
   });
-  hp.on('error', e => say('Erro de conexão: ' + e.type, true));
+  const rec = () => setTimeout(() => { if (hp && !hp.destroyed && hp.disconnected) hp.reconnect(); }, 2000);
+  hp.on('disconnected', () => { say('Conexão com o servidor caiu. Reconectando…'); rec(); });
+  hp.on('error', e => {
+    if (e.type === 'network') { say('Sem conexão com o servidor. Tentando reconectar…'); rec(); }
+    else say('Erro de conexão: ' + e.type, true);
+  });
+}
+
+function pref(sdp) {
+  const c = $('cdc').value; if (c === 'auto') return sdp;
+  const L = sdp.split('\r\n'), mi = L.findIndex(l => l.startsWith('m=video')); if (mi < 0) return sdp;
+  const want = [];
+  L.forEach(l => { const m = l.match(/^a=rtpmap:(\d+) ([A-Za-z0-9]+)\//); if (m && m[2].toUpperCase() === c) want.push(m[1]); });
+  const parts = L[mi].split(' '), pts = parts.slice(3);
+  if (!want.length) return sdp;
+  L[mi] = parts.slice(0, 3).concat(want.filter(x => pts.includes(x)), pts.filter(x => !want.includes(x))).join(' ');
+  return L.join('\r\n');
 }
 
 function accept(id) {
   const p = pend.get(id); if (!p || !stream) return;
   pend.delete(id);
-  const call = hp.call(id, stream);
+  const call = hp.call(id, stream, { sdpTransform: pref });
   call.on('close', () => { viewers.delete(id); draw(); });
   call.on('error', () => { viewers.delete(id); draw(); });
   viewers.set(id, { conn: p.conn, call, nick: p.nick });
@@ -299,7 +333,8 @@ async function stats() {
       if (s.type === 'outbound-rtp' && s.kind === 'video') {
         const kbps = last ? Math.round((s.bytesSent - last.b) * 8 / (s.timestamp - last.t)) : 0;
         last = { b: s.bytesSent, t: s.timestamp };
-        $('stats').textContent = `${s.frameWidth || '?'}×${s.frameHeight || '?'} · ${Math.round(s.framesPerSecond || 0)} fps · ${kbps} kbps por espectador`;
+        const lim = { none: 'nenhum', cpu: 'CPU', bandwidth: 'banda' }[s.qualityLimitationReason] || s.qualityLimitationReason || '?';
+        $('stats').textContent = `${s.frameWidth || '?'}×${s.frameHeight || '?'} · ${Math.round(s.framesPerSecond || 0)} fps · ${kbps} kbps por espectador · encoder: ${s.encoderImplementation || '?'} · limite: ${lim}`;
       }
     });
   } catch (e) {}
@@ -327,6 +362,7 @@ function stop() {
   if (hp) hp.destroy();
   stream = hp = null; pend.clear(); viewers.clear(); draw();
   $('live').classList.add('hide'); $('stop').classList.add('hide'); $('go').classList.remove('hide');
+  $('asrc').disabled = false;
   say('Transmissão encerrada.'); tag('Offline');
 }
 
