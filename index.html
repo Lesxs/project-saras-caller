@@ -276,7 +276,7 @@ button:disabled,select:disabled,input:disabled{opacity:.55;cursor:not-allowed}
     </div>
 
     <div id="stage" class="hide">
-      <div id="vwrap" class="c-br"><video id="v" autoplay playsinline></video><video id="cv" class="hide" muted autoplay playsinline></video></div>
+      <div id="vwrap" class="c-br"><video id="v" autoplay playsinline></video><div id="vwait" class="hide">Aguardando imagem da transmissão…</div><video id="cv" class="hide" muted autoplay playsinline></video></div>
       <div class="bar player-controls">
         <div class="volume-control"><button id="mt" class="sec">Mutar</button>
         <input id="vol" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume"></div>
@@ -336,6 +336,7 @@ let liveVisibility = 'private';
 const senderStatsPrev = new Map();
 let viewerTargetId = null, viewerNick = '', viewerRequestedPublic = false, viewerReconnectTimer = null, viewerIceTimer = null, viewerRetry = 0, viewerLeaving = false, captureInfo = 'Captura ainda não iniciada';
 let streamerReconnectTimer = null, streamerReconnectAttempt = 0;
+let liveHeartbeatTimer = null, liveExpiryTimer = null, viewerConnectTimer = null;
 let viewerHealth = { videoStalls: 0, audioStalls: 0, lastNotice: 0, trackTimer: null };
 function resetViewerHealth() { clearTimeout(viewerHealth.trackTimer); viewerHealth = { videoStalls: 0, audioStalls: 0, lastNotice: 0, trackTimer: null }; }
 function watchViewerTracks(mediaStream) {
@@ -356,6 +357,8 @@ function watchViewerTracks(mediaStream) {
     track.addEventListener('ended', () => { if (!viewerLeaving && vcall) scheduleViewerReconnect('O fluxo de áudio foi encerrado.'); });
   });
   mediaStream.getVideoTracks().forEach(track => {
+    track.addEventListener('mute', () => { if (!viewerLeaving && vcall) showVideoWait('A imagem foi interrompida temporariamente. Tentando retomar…'); });
+    track.addEventListener('unmute', () => { if (!viewerLeaving && vcall) $('v').play().catch(() => {}); });
     track.addEventListener('ended', () => { if (!viewerLeaving && vcall) scheduleViewerReconnect('O fluxo de vídeo foi encerrado.'); });
   });
 }
@@ -379,17 +382,27 @@ async function setGroup(code) {
 
 function subscribe() {
   if (es) es.close();
+  clearInterval(liveExpiryTimer);
   lives.clear(); drawLives();
   es = new EventSource(NTFY + topic + '/sse?since=12h');
   es.onmessage = e => {
     try {
       const m = JSON.parse(e.data); if (m.event !== 'message') return;
       const d = JSON.parse(m.message);
-      if (d.t === 'on' && d.id !== myId) lives.set(d.id, { name: String(d.name || 'Live').slice(0, 20), visibility: d.visibility === 'public' ? 'public' : 'private', at: m.time * 1000 });
-      else if (d.t === 'off') lives.delete(d.id);
+      const at = Number(m.time || 0) * 1000;
+      // O histórico do ntfy pode conter anúncios de lives encerradas sem evento "off".
+      if (d.t === 'on' && d.id !== myId) {
+        if (!at || Date.now() - at > 80000) return;
+        lives.set(d.id, { name: String(d.name || 'Live').slice(0, 20), visibility: d.visibility === 'public' ? 'public' : 'private', at });
+      } else if (d.t === 'off') lives.delete(d.id);
       drawLives();
     } catch (x) {}
   };
+  liveExpiryTimer = setInterval(() => {
+    let changed = false;
+    lives.forEach((l, id) => { if (Date.now() - l.at > 80000) { lives.delete(id); changed = true; } });
+    if (changed) drawLives();
+  }, 15000);
 }
 
 function ago(t) { const m = Math.max(1, Math.round((Date.now() - t) / 60000)); return m < 60 ? 'há ' + m + ' min' : 'há ' + Math.round(m / 60) + ' h'; }
@@ -406,6 +419,7 @@ function leaveGroup() {
   if (stream) stop();
   leave();
   if (es) es.close();
+  clearInterval(liveExpiryTimer); liveExpiryTimer = null;
   grp = topic = null; try { localStorage.removeItem('grp'); } catch (e) {}
   $('gon').classList.add('hide'); $('gin').classList.remove('hide'); $('app').classList.add('hide');
 }
@@ -448,6 +462,16 @@ async function start() {
   const actualCapture = `${captureSettings.width || '?'}×${captureSettings.height || '?'} · ${Math.round(captureSettings.frameRate || 0)} fps`;
   captureInfo = actualCapture;
   vt.onended = stop;
+  vt.addEventListener('mute', () => {
+    if (!stream || vt.readyState !== 'live') return;
+    say('A fonte da captura ficou temporariamente indisponível. Quando o navegador voltar a fornecer imagem, a transmissão será retomada.', true);
+    viewers.forEach(v => { try { v.conn.send({ t: 'capture', state: 'paused' }); } catch (e) {} });
+  });
+  vt.addEventListener('unmute', () => {
+    if (!stream || vt.readyState !== 'live') return;
+    say('Captura de tela retomada.');
+    viewers.forEach(v => { try { v.conn.send({ t: 'capture', state: 'live' }); } catch (e) {} });
+  });
   $('pv').srcObject = stream; $('pv').classList.remove('hide'); $('pvb').textContent = 'Esconder prévia';
   if (camWanted) { const m = await openCam(); if (m) note = (note ? note + ' ' : '') + m + ' A transmissão segue só com a tela.'; }
   say((note ? note + ' ' : '') + `Captura selecionada: ${actualCapture}. O navegador pode limitar a captura conforme o jogo e o sistema.`, !!note);
@@ -460,6 +484,8 @@ async function start() {
     if (myId === id) { say(''); return; }
     myId = id; lives.delete(id); drawLives();
     post({ t: 'on', id, name: $('nick').value.trim().slice(0, 20) || 'Streamer', visibility: liveVisibility });
+    clearInterval(liveHeartbeatTimer);
+    liveHeartbeatTimer = setInterval(() => { if (myId === id && stream && hp && !hp.destroyed) post({ t: 'on', id, name: $('nick').value.trim().slice(0, 20) || 'Streamer', visibility: liveVisibility }); }, 25000);
     $('visibility').disabled = true;
     $('live').classList.remove('hide'); tag('Ao vivo', 1);
     $('go').classList.add('hide'); $('stop').classList.remove('hide');
@@ -642,7 +668,7 @@ function accept(id) {
   p.conn.send({ t: 'pos', pos: $('hpos').value });
   sendCam(id);
   let recoveryNotified = false;
-  call.peerConnection.addEventListener('connectionstatechange', () => {
+  if (call.peerConnection) call.peerConnection.addEventListener('connectionstatechange', () => {
     applyBr(call);
     const state = call.peerConnection.connectionState;
     if (state === 'connected') recoveryNotified = false;
@@ -912,7 +938,7 @@ function draw(newReq) {
 }
 
 function stop() {
-  clearInterval(timer); clearTimeout(streamerReconnectTimer); streamerReconnectTimer = null; streamerReconnectAttempt = 0;
+  clearInterval(timer); clearInterval(liveHeartbeatTimer); liveHeartbeatTimer = null; clearTimeout(streamerReconnectTimer); streamerReconnectTimer = null; streamerReconnectAttempt = 0;
   if (myId && topic) post({ t: 'off', id: myId });
   myId = null;
   $('pv').srcObject = null; closeCam();
@@ -932,7 +958,19 @@ $('pvb').onclick = () => {
 };
 
 /* ---------- Espectador ---------- */
+function showVideoWait(message) {
+  const el = $('vwait');
+  if (!el) return;
+  el.textContent = message || 'Aguardando imagem da transmissão…';
+  el.classList.remove('hide');
+}
+function hideVideoWait() { if ($('vwait')) $('vwait').classList.add('hide'); }
+$('v').addEventListener('playing', hideVideoWait);
+$('v').addEventListener('waiting', () => showVideoWait('A imagem está carregando…'));
+$('v').addEventListener('stalled', () => showVideoWait('Aguardando a imagem voltar…'));
+$('v').addEventListener('click', () => { $('v').play().then(hideVideoWait).catch(() => say('Toque novamente no vídeo para iniciar a reprodução.', true)); });
 function join(id, isPublic = false) {
+  clearTimeout(viewerConnectTimer); viewerConnectTimer = null;
   viewerTargetId = id; viewerNick = $('nick').value.trim(); viewerRequestedPublic = !!isPublic; viewerRetry = 0; viewerLeaving = false;
   clearTimeout(viewerReconnectTimer);
   say(isPublic ? 'Entrando na live pública…' : 'Solicitando entrada na live privada…');
@@ -940,6 +978,7 @@ function join(id, isPublic = false) {
 }
 
 function scheduleViewerReconnect(reason) {
+  clearTimeout(viewerConnectTimer); viewerConnectTimer = null;
   if (viewerLeaving || !viewerTargetId || viewerReconnectTimer) return;
   if (viewerRetry >= 5) {
     say('Não foi possível recuperar a transmissão automaticamente. Tente entrar novamente.', true);
@@ -955,17 +994,24 @@ function scheduleViewerReconnect(reason) {
 }
 
 function connectViewer(id, nick, isPublic = false) {
+  clearTimeout(viewerConnectTimer); viewerConnectTimer = null;
+  showVideoWait('Conectando à transmissão…');
   if (vp) { try { vp.destroy(); } catch (e) {} }
   vp = vconn = vcall = null;
   clearInterval(vtimer); clearTimeout(viewerIceTimer); viewerIceTimer = null; vprev = null; vreportAt = 0; vfreezePending = 0; resetViewerHealth();
   say('Conectando…');
   const peer = vp = new Peer({ config: RTC_CONFIG });
+  if (isPublic) viewerConnectTimer = setTimeout(() => {
+    if (peer === vp && !viewerLeaving && !vcall) scheduleViewerReconnect('A live pública não iniciou a imagem a tempo.');
+  }, 18000);
   peer.on('open', () => {
     if (peer !== vp || viewerLeaving) return;
     const conn = vconn = peer.connect(id, { reliable: true });
     conn.on('open', () => { if (conn !== vconn) return; conn.send({ t: 'hi', nick }); say(isPublic ? 'Conectando à live pública…' : 'Aguardando o streamer aprovar…'); });
     conn.on('data', d => {
-      if (d.t === 'ok') { viewerRetry = 0; say('Aprovado. Carregando a transmissão…'); if (vconn && vconn.open) vconn.send({ t: 'q', auto: true }); }
+      if (d.t === 'ok') { say('Acesso liberado. Carregando a transmissão…'); if (vconn && vconn.open) vconn.send({ t: 'q', auto: true }); }
+      if (d.t === 'capture' && d.state === 'paused') { showVideoWait('A captura da tela foi temporariamente interrompida. Aguardando o transmissor retomar…'); say('Aguardando a captura da tela voltar…'); }
+      if (d.t === 'capture' && d.state === 'live') { showVideoWait('A imagem está voltando…'); $('v').play().catch(() => {}); say('Captura retomada.'); }
       if (d.t === 'cam' && !d.on) hideCam();
       if (d.t === 'pos') setCamPos(d.pos);
       if (d.t === 'no') { say('O streamer recusou a entrada.', true); leave(); }
@@ -996,10 +1042,15 @@ function connectViewer(id, nick, isPublic = false) {
     }
     call.on('stream', s => {
       if (peer !== vp) return;
+      clearTimeout(viewerConnectTimer); viewerConnectTimer = null;
       const v = $('v'); v.srcObject = s; $('stage').classList.remove('hide');
-      tag('Assistindo', 1);
+      showVideoWait('Conexão estabelecida. Aguardando os primeiros quadros…');
+      tag('Conectado', 1);
       vcall = call; vprev = null; vreportAt = 0; vfreezePending = 0; watchViewerTracks(s); clearInterval(vtimer); vtimer = setInterval(vstats, 2000);
-      v.play().then(() => { say(''); viewerRetry = 0; }).catch(() => { v.muted = true; v.play(); say('Clique no vídeo e ative o som.'); });
+      v.play().then(() => { say(''); }).catch(() => {
+        v.muted = true;
+        v.play().then(() => say('Reprodução iniciada sem áudio. Ative o som nos controles.')).catch(() => say('Toque no vídeo para iniciar a reprodução.', true));
+      });
     });
     call.on('close', () => { if (peer === vp && !viewerLeaving) scheduleViewerReconnect('A transmissão foi interrompida.'); });
     call.on('error', () => { if (peer === vp && !viewerLeaving) scheduleViewerReconnect('Ocorreu uma falha no vídeo.'); });
@@ -1014,6 +1065,30 @@ function connectViewer(id, nick, isPublic = false) {
   });
 }
 
+// Ao voltar de outra aba/janela, retoma o player e dá tempo ao navegador para voltar a decodificar.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (stream) {
+    const track = stream.getVideoTracks()[0];
+    if (track && track.readyState === 'live' && !track.muted) say('Transmissão ativa. Verificando a captura após retornar à página…');
+  }
+  if (vcall && $('v').srcObject) {
+    const video = $('v');
+    const beforeFrames = video.getVideoPlaybackQuality ? video.getVideoPlaybackQuality().totalVideoFrames : null;
+    showVideoWait('Retomando a reprodução…');
+    video.play().catch(() => say('Toque no vídeo para retomar a reprodução.', true));
+    clearTimeout(viewerConnectTimer);
+    viewerConnectTimer = setTimeout(() => {
+      if (!vcall || viewerLeaving || !video.srcObject) return;
+      const afterFrames = video.getVideoPlaybackQuality ? video.getVideoPlaybackQuality().totalVideoFrames : null;
+      const noNewFrames = beforeFrames !== null && afterFrames !== null && afterFrames <= beforeFrames;
+      if (video.paused || video.readyState < 2 || noNewFrames)
+        scheduleViewerReconnect('A imagem não voltou a ser decodificada depois de retornar à página.');
+      else hideVideoWait();
+    }, 6500);
+  }
+});
+
 const POS = ['tl', 'bl', 'tr', 'br'];
 function setCamPos(pos) {
   if (!POS.includes(pos)) return;
@@ -1024,11 +1099,11 @@ $('campos').onchange = e => setCamPos(e.target.value);
 function hideCam() { $('cv').srcObject = null; $('cv').classList.add('hide'); $('camb').classList.add('hide'); $('camposl').classList.add('hide'); }
 
 function leave() {
-  viewerLeaving = true; viewerTargetId = null; viewerRequestedPublic = false; clearTimeout(viewerReconnectTimer); viewerReconnectTimer = null; clearTimeout(viewerIceTimer); viewerIceTimer = null;
+  viewerLeaving = true; viewerTargetId = null; viewerRequestedPublic = false; clearTimeout(viewerConnectTimer); viewerConnectTimer = null; clearTimeout(viewerReconnectTimer); viewerReconnectTimer = null; clearTimeout(viewerIceTimer); viewerIceTimer = null;
   if (pipWin) pipWin.close();
   const p = vp; vp = vconn = vcall = null; clearInterval(vtimer); resetViewerHealth(); vfreezePending = 0; $('vst').textContent = '';
   if (p) p.destroy();
-  $('v').srcObject = null; hideCam();
+  $('v').srcObject = null; hideVideoWait(); hideCam();
   $('stage').classList.add('hide');
   if (document.fullscreenElement) document.exitFullscreen();
   tag(stream ? 'Ao vivo' : 'Offline', !!stream);
