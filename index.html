@@ -52,6 +52,14 @@ video{width:100%;background:#000;border:1px solid var(--ln);border-radius:12px;m
 #cv{position:absolute;right:12px;bottom:12px;width:22%;min-width:140px;max-width:320px;height:auto;aspect-ratio:16/9;max-height:none;object-fit:cover;border:2px solid var(--ac);border-radius:10px}
 #stage:fullscreen #cv,#stage.foco #cv{bottom:64px}
 #pcv{max-width:200px}
+#alert{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.55);padding:16px}
+.alertbox{background:var(--pn);border:2px solid var(--ac);border-radius:16px;padding:24px 28px;min-width:280px;max-width:90vw;text-align:center;display:grid;gap:12px;animation:glow 1.1s ease-in-out infinite}
+.alertbox h3{margin:0;font-size:18px}
+.alertbox .row{justify-content:center}
+.ring{color:var(--ac);display:grid;justify-items:center;animation:shake .9s ease-in-out infinite;transform-origin:50% 10%}
+@keyframes glow{0%,100%{box-shadow:0 0 12px 2px rgba(88,101,242,.5)}50%{box-shadow:0 0 38px 12px rgba(88,101,242,.95)}}
+@keyframes shake{0%,100%{transform:rotate(0)}20%{transform:rotate(-14deg)}40%{transform:rotate(12deg)}60%{transform:rotate(-8deg)}80%{transform:rotate(6deg)}}
+@media (prefers-reduced-motion:reduce){.alertbox,.ring{animation:none}.alertbox{box-shadow:0 0 28px 8px rgba(88,101,242,.8)}}
 body.foco{padding:0;overflow:hidden}
 body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){display:none}
 #stage.foco{position:fixed;inset:0;z-index:5;background:#000;gap:0}
@@ -116,12 +124,13 @@ body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){disp
           <select id="prio"><option value="fps" selected>Fluidez (FPS)</option><option value="res">Nitidez (resolução)</option></select>
         </label>
         <label>Câmera
-          <select id="cam"><option value="">Sem câmera</option><option value="default">Câmera padrão</option></select>
+          <select id="cam"><option value="default">Câmera padrão</option></select>
         </label>
         <label>Qualidade da câmera
           <select id="camq"><option value="360">360p</option><option value="720" selected>720p</option><option value="1080">1080p</option><option value="max">Nativa (máxima da câmera)</option></select>
         </label>
         <button id="camlist" class="sec">Listar câmeras</button>
+        <button id="camtog" class="sec">Câmera: desligada</button>
         <button id="go">Streamar</button>
         <button id="stop" class="bad hide">Parar</button>
       </div>
@@ -129,7 +138,7 @@ body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){disp
       <p id="hw" class="mut"></p>
 
       <div id="live" class="hide" style="display:grid;gap:12px">
-        <div class="row"><button id="pvb" class="sec">Esconder prévia</button><span class="mut">Se você compartilha a tela inteira, a prévia aparece repetida dentro dela. Compartilhar só a janela do jogo evita isso.</span></div>
+        <div class="row"><button id="pvb" class="sec">Esconder prévia</button><button id="altest" class="sec">Testar alerta</button><span class="mut">Se você compartilha a tela inteira, a prévia aparece repetida dentro dela. Compartilhar só a janela do jogo evita isso.</span></div>
         <video id="pv" muted autoplay playsinline></video>
         <video id="pcv" class="hide" muted autoplay playsinline></video>
         <p id="camres" class="mut"></p>
@@ -164,6 +173,16 @@ body.foco header,body.foco #msg,body.foco #gbox,body.foco #app>:not(#stage){disp
   </section>
 </main>
 
+<div id="alert" class="hide" role="alertdialog" aria-live="assertive" aria-labelledby="altitle">
+  <div class="alertbox">
+    <div class="ring"><svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg></div>
+    <h3 id="altitle">Pedido de entrada</h3>
+    <p id="alnick"></p>
+    <div class="row"><button id="alyes">Aceitar</button><button id="alno" class="sec">Recusar</button></div>
+    <p id="alcount" class="mut"></p>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 const $ = id => document.getElementById(id);
@@ -171,7 +190,8 @@ const say = (t, bad) => { $('msg').textContent = t || ''; $('msg').style.color =
 const tag = (t, on) => { $('tag').textContent = t; $('tag').classList.toggle('on', !!on); };
 const token = () => { const a = new Uint8Array(16); crypto.getRandomValues(a); return Array.from(a, b => b.toString(16).padStart(2, '0')).join(''); };
 const NTFY = 'https://ntfy.sh/';
-let camBr = 900000, camH = 0;
+let camBr = 900000, camH = 0, actx, alertTimer, titleTimer, alertBeeps = 0;
+const baseTitle = document.title;
 const WIN_AUDIO = (() => { const m = navigator.userAgent.match(/(?:Chrome|Chromium)\/(\d+)/); return !!m && +m[1] >= 141; })();
 if (!WIN_AUDIO) $('asrc').options[0].textContent = 'Somente a janela do jogo (não suportado neste navegador)';
 let hp, vp, stream, camStream, timer, last, fh = [], vconn, vcall, vtimer, vprev, es, grp, topic, myId, guest = 0;
@@ -239,6 +259,8 @@ function constraints() {
 $('go').onclick = start; $('stop').onclick = stop;
 
 async function start() {
+  if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
+  if (actx && actx.state === 'suspended') actx.resume();
   if (!grp) return say('Entre em um grupo primeiro.', true);
   const mode = $('asrc').value, raw = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
   const opts = { video: constraints(), audio: mode === 'none' || (mode === 'win' && !WIN_AUDIO) ? false : raw };
@@ -256,21 +278,9 @@ async function start() {
   vt.contentHint = 'motion';
   vt.onended = stop;
   $('pv').srcObject = stream; $('pv').classList.remove('hide'); $('pvb').textContent = 'Esconder prévia';
-  const cs = $('cam').value;
-  if (cs) {
-    try {
-      const q = $('camq').value;
-      const dim = q === 'max' ? { width: { ideal: 7680 }, height: { ideal: 4320 } } : { width: { ideal: Math.round(+q * 16 / 9) }, height: { ideal: +q } };
-      camStream = await navigator.mediaDevices.getUserMedia({ video: { ...(cs !== 'default' ? { deviceId: { exact: cs } } : {}), ...dim, frameRate: { ideal: 30 } }, audio: false });
-      const st = camStream.getVideoTracks()[0].getSettings(), fps = Math.round(st.frameRate || 30);
-      camH = st.height || 0;
-      camBr = (q === 'max' ? Math.min(8000, Math.max(2500, Math.round((st.width || 0) * camH * fps * 0.07 / 1000))) : { 360: 900, 720: 2500, 1080: 5000 }[q]) * 1000;
-      $('camres').textContent = `Câmera: ${st.width}×${st.height} · ${fps} fps · até ${Math.round(camBr / 1000)} kbps por espectador` + (q !== 'max' && camH < +q * 0.95 ? ` (a câmera não oferece ${q}p)` : '');
-      $('pcv').srcObject = camStream; $('pcv').classList.remove('hide');
-    } catch (e) { camStream = null; note = (note ? note + ' ' : '') + 'Não consegui abrir a câmera (permissão negada ou em uso). A transmissão segue só com a tela.'; }
-  }
+  if (camWanted) { const m = await openCam(); if (m) note = (note ? note + ' ' : '') + m + ' A transmissão segue só com a tela.'; }
   say(note, !!note);
-  $('asrc').disabled = true; $('cam').disabled = true; $('camq').disabled = true; $('camlist').disabled = true;
+  $('asrc').disabled = true; setCamUI();
 
   const id = 'sv' + token();
   hp = new Peer(id);
@@ -293,7 +303,7 @@ async function start() {
       if (!d || d.t !== 'hi' || pend.has(conn.peer) || viewers.has(conn.peer)) return;
       if (pend.size + viewers.size >= +$('max').value) { conn.send({ t: 'full' }); setTimeout(() => conn.close(), 300); return; }
       pend.set(conn.peer, { conn, nick: String(d.nick || '').trim().slice(0, 20) || 'Convidado ' + (++guest) });
-      draw();
+      draw(true);
     });
     conn.on('close', () => { pend.delete(conn.peer); draw(); });
   });
@@ -353,6 +363,59 @@ async function probe() {
 ['res', 'fps', 'br', 'cdc'].forEach(k => $(k).addEventListener('change', probe));
 probe();
 
+let camWanted = false;
+function setCamUI() {
+  const on = stream ? !!camStream : camWanted;
+  $('camtog').textContent = on ? 'Câmera: ligada' : 'Câmera: desligada';
+  $('camtog').classList.toggle('sec', !on);
+  $('cam').disabled = $('camq').disabled = $('camlist').disabled = !!camStream;
+}
+
+async function openCam() {
+  const cs = $('cam').value, q = $('camq').value;
+  try {
+    const dim = q === 'max' ? { width: { ideal: 7680 }, height: { ideal: 4320 } } : { width: { ideal: Math.round(+q * 16 / 9) }, height: { ideal: +q } };
+    camStream = await navigator.mediaDevices.getUserMedia({ video: { ...(cs !== 'default' ? { deviceId: { exact: cs } } : {}), ...dim, frameRate: { ideal: 30 } }, audio: false });
+    const st = camStream.getVideoTracks()[0].getSettings(), fps = Math.round(st.frameRate || 30);
+    camH = st.height || 0;
+    camBr = (q === 'max' ? Math.min(8000, Math.max(2500, Math.round((st.width || 0) * camH * fps * 0.07 / 1000))) : { 360: 900, 720: 2500, 1080: 5000 }[q]) * 1000;
+    $('camres').textContent = `Câmera: ${st.width}×${st.height} · ${fps} fps · até ${Math.round(camBr / 1000)} kbps por espectador` + (q !== 'max' && camH < +q * 0.95 ? ` (a câmera não oferece ${q}p)` : '');
+    $('pcv').srcObject = camStream; $('pcv').classList.remove('hide');
+    camStream.getVideoTracks()[0].onended = () => { closeCam(); say('A câmera foi desconectada.', true); };
+    setCamUI();
+    return '';
+  } catch (e) { camStream = null; setCamUI(); return 'Não consegui abrir a câmera (permissão negada ou em uso).'; }
+}
+
+function sendCam(id) {
+  const v = viewers.get(id); if (!v || !camStream || v.cam) return;
+  const cc = hp.call(id, camStream, { metadata: { kind: 'cam' }, ...(camH > 480 ? { sdpTransform: pref } : {}) });
+  v.cam = cc;
+  cc.peerConnection.addEventListener('connectionstatechange', () => applyCam(cc));
+  applyCam(cc);
+}
+
+function closeCam() {
+  viewers.forEach(v => {
+    try { v.conn.send({ t: 'cam', on: false }); } catch (e) {}
+    if (v.cam) { try { v.cam.close(); } catch (e) {} v.cam = null; }
+  });
+  if (camStream) camStream.getTracks().forEach(t => { t.onended = null; t.stop(); });
+  camStream = null; $('pcv').srcObject = null; $('pcv').classList.add('hide'); $('camres').textContent = '';
+  setCamUI();
+}
+
+$('camtog').onclick = async () => {
+  if (!stream) { camWanted = !camWanted; setCamUI(); return; }
+  if (camStream) { closeCam(); say('Câmera desligada.'); return; }
+  $('camtog').disabled = true;
+  const m = await openCam();
+  $('camtog').disabled = false;
+  if (m) say(m, true); else { viewers.forEach((v, id) => sendCam(id)); say('Câmera ligada.'); }
+  setCamUI();
+};
+setCamUI();
+
 $('camlist').onclick = async () => {
   try { (await navigator.mediaDevices.getUserMedia({ video: true })).getTracks().forEach(t => t.stop()); }
   catch (e) { return say('Permita o acesso à câmera para listar os dispositivos.', true); }
@@ -361,7 +424,7 @@ $('camlist').onclick = async () => {
   (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput').forEach(d => {
     const o = document.createElement('option'); o.value = d.deviceId; o.dataset.d = 1; o.textContent = d.label || 'Câmera'; sel.appendChild(o);
   });
-  sel.value = Array.from(sel.options).some(o => o.value === cur) ? cur : '';
+  sel.value = Array.from(sel.options).some(o => o.value === cur) ? cur : 'default';
   say('Câmeras listadas. Dispositivos de vídeo, como a câmera virtual do OBS, também aparecem aqui.');
 };
 
@@ -372,13 +435,8 @@ function accept(id) {
   call.on('close', () => { viewers.delete(id); draw(); });
   call.on('error', () => { viewers.delete(id); draw(); });
   viewers.set(id, { conn: p.conn, call, nick: p.nick });
-  if (camStream) {
-    const cc = hp.call(id, camStream, { metadata: { kind: 'cam' }, ...(camH > 480 ? { sdpTransform: pref } : {}) });
-    viewers.get(id).cam = cc;
-    cc.peerConnection.addEventListener('connectionstatechange', () => applyCam(cc));
-    applyCam(cc);
-  }
   p.conn.send({ t: 'ok' });
+  sendCam(id);
   call.peerConnection.addEventListener('connectionstatechange', () => applyBr(call));
   applyBr(call);
   draw();
@@ -482,19 +540,58 @@ function row(list, nick, buttons) {
   buttons.forEach(([t, cls, fn]) => { const b = document.createElement('button'); b.textContent = t; b.className = cls; b.onclick = fn; d.appendChild(b); });
   li.appendChild(d); list.appendChild(li);
 }
-function draw() {
+function beep() {
+  if (!actx) return;
+  try {
+    if (actx.state === 'suspended') actx.resume();
+    const t = actx.currentTime;
+    [[880, 0], [1175, 0.17]].forEach(([f, d]) => {
+      const o = actx.createOscillator(), g = actx.createGain();
+      o.type = 'sine'; o.frequency.value = f;
+      g.gain.setValueAtTime(0.0001, t + d);
+      g.gain.exponentialRampToValueAtTime(0.25, t + d + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.22);
+      o.connect(g); g.connect(actx.destination); o.start(t + d); o.stop(t + d + 0.25);
+    });
+  } catch (e) {}
+}
+
+function hideAlert() {
+  $('alert').classList.add('hide');
+  clearInterval(alertTimer); clearInterval(titleTimer); document.title = baseTitle;
+}
+
+function syncAlert(newReq) {
+  const first = pend.entries().next().value;
+  if (!first) { hideAlert(); return; }
+  const [id, p] = first, wasHidden = $('alert').classList.contains('hide');
+  $('alnick').textContent = p.nick + ' quer entrar na sua transmissão';
+  $('alcount').textContent = pend.size > 1 ? '+' + (pend.size - 1) + ' esperando' : '';
+  $('alyes').onclick = () => accept(id);
+  $('alno').onclick = () => refuse(id);
+  if (wasHidden) {
+    $('alert').classList.remove('hide'); $('alyes').focus();
+    alertBeeps = 1;
+    alertTimer = setInterval(() => { if (alertBeeps++ < 5) beep(); }, 8000);
+    let on = false; titleTimer = setInterval(() => { document.title = (on = !on) ? '(!) Pedido de entrada' : baseTitle; }, 1000);
+  }
+  if (wasHidden || newReq) beep();
+}
+
+$('altest').onclick = () => { if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} } beep(); say('Alerta de teste tocado.'); };
+
+function draw(newReq) {
   const a = $('pend'), b = $('vw'); a.replaceChildren(); b.replaceChildren();
   pend.forEach((p, id) => row(a, p.nick, [['Aceitar', '', () => accept(id)], ['Recusar', 'sec', () => refuse(id)]]));
   viewers.forEach((p, id) => row(b, p.nick, [['Remover', 'sec', () => refuse(id)]]));
+  syncAlert(newReq);
 }
 
 function stop() {
   clearInterval(timer);
   if (myId && topic) post({ t: 'off', id: myId });
   myId = null;
-  $('pv').srcObject = null; $('pcv').srcObject = null; $('pcv').classList.add('hide');
-  if (camStream) camStream.getTracks().forEach(t => t.stop());
-  camStream = null; $('camres').textContent = ''; $('cam').disabled = false; $('camq').disabled = false; $('camlist').disabled = false;
+  $('pv').srcObject = null; closeCam();
   if (stream) stream.getTracks().forEach(t => t.stop());
   if (hp) hp.destroy();
   stream = hp = null; fh = []; pend.clear(); viewers.clear(); draw();
@@ -521,6 +618,7 @@ function join(id) {
     conn.on('open', () => { conn.send({ t: 'hi', nick }); say('Aguardando o streamer aprovar…'); });
     conn.on('data', d => {
       if (d.t === 'ok') say('Aprovado. Carregando a transmissão…');
+      if (d.t === 'cam' && !d.on) hideCam();
       if (d.t === 'no') { say('O streamer recusou a entrada.', true); leave(); }
       if (d.t === 'full') { say('A sala está cheia.', true); leave(); }
     });
@@ -530,7 +628,7 @@ function join(id) {
     call.answer();
     if (call.metadata && call.metadata.kind === 'cam') {
       call.on('stream', s => { const c = $('cv'); c.srcObject = s; c.classList.remove('hide'); $('camb').classList.remove('hide'); $('camb').textContent = 'Ocultar câmera'; c.play().catch(() => {}); });
-      call.on('close', () => { $('cv').srcObject = null; $('cv').classList.add('hide'); $('camb').classList.add('hide'); });
+      call.on('close', hideCam);
       return;
     }
     call.on('stream', s => {
@@ -547,6 +645,8 @@ function join(id) {
     else say('Erro: ' + e.type, true);
   });
 }
+
+function hideCam() { $('cv').srcObject = null; $('cv').classList.add('hide'); $('camb').classList.add('hide'); }
 
 function leave() {
   const p = vp; vp = vconn = vcall = null; clearInterval(vtimer); $('vst').textContent = '';
