@@ -1,52 +1,14 @@
-const CACHE = 'saras-caller-v2';
-const ASSETS = [
-  './',
-  './index.html',
-  './manifest.webmanifest',
-  './banner.jpg',
-  './icon-192.png',
-  './icon-512.png',
-  './icon-maskable-192.png',
-  './icon-maskable-512.png'
-];
-
-self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE)
-      .then(cache => cache.addAll(ASSETS))
-      .then(() => self.skipWaiting())
-  );
+const C = 'tp-v1', F = ['./', 'index.html', 'manifest.webmanifest', 'icon-192.png'];
+self.addEventListener('install', e => { e.waitUntil(caches.open(C).then(c => c.addAll(F))); self.skipWaiting(); });
+self.addEventListener('activate', e => {
+  e.waitUntil(caches.keys().then(k => Promise.all(k.filter(x => x !== C).map(x => caches.delete(x)))));
+  self.clients.claim();
 });
-
-self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys()
-      .then(keys => Promise.all(keys.filter(key => (key.startsWith('saras-caller-') || key === 'tp-v1') && key !== CACHE).map(key => caches.delete(key))))
-      .then(() => self.clients.claim())
-  );
-});
-
-// Rede primeiro; usa o cache como fallback quando estiver offline.
-self.addEventListener('fetch', event => {
-  const request = event.request;
-  const url = new URL(request.url);
-  if (request.method !== 'GET' || url.origin !== self.location.origin) return;
-
-  event.respondWith(
-    fetch(request).then(response => {
-      if (response && response.ok) {
-        const copy = response.clone();
-        caches.open(CACHE).then(cache => cache.put(request, copy)).catch(() => {});
-      }
-      return response;
-    }).catch(async () => {
-      const cached = await caches.match(request);
-      if (cached) return cached;
-      if (request.mode === 'navigate') {
-        const appShell = await caches.match('./index.html');
-        if (appShell) return appShell;
-      }
-      return Response.error();
-    })
-  );
+// Rede primeiro (sempre a versão nova); cache só se estiver offline.
+self.addEventListener('fetch', e => {
+  const u = new URL(e.request.url);
+  if (e.request.method !== 'GET' || u.origin !== location.origin) return;
+  e.respondWith(fetch(e.request).then(r => {
+    const c = r.clone(); caches.open(C).then(x => x.put(e.request, c)); return r;
+  }).catch(() => caches.match(e.request)));
 });
