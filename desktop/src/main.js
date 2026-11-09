@@ -8,31 +8,42 @@ const pages = {
 const crumb = document.querySelector("#crumb");
 const frame = document.querySelector("#stream-frame");
 const frameLoading = document.querySelector("#frame-loading");
-let frameLoaded = false;
+let streamPageRequested = false;
 
 function showPage(name) {
-  if (!pages[name]) return;
-  Object.entries(pages).forEach(([key, page]) => {
+  const selected = pages[name];
+  if (!selected) return;
+
+  for (const [key, page] of Object.entries(pages)) {
     page.element.classList.toggle("active", key === name);
+  }
+  document.querySelectorAll(".nav-item").forEach((button) => {
+    const active = button.dataset.page === name;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-current", active ? "page" : "false");
   });
-  document.querySelectorAll("[data-page]").forEach((button) => {
-    button.classList.toggle("active", button.dataset.page === name);
-  });
-  crumb.textContent = pages[name].title;
-  if (name === "stream" && !frameLoaded) {
-    frame.src = "./stream.html";
-    frameLoaded = true;
+  crumb.textContent = selected.title;
+
+  if (name === "stream" && !streamPageRequested) {
+    frameLoading.classList.remove("hidden");
+    frame.src = new URL("stream.html", window.location.href).href;
+    streamPageRequested = true;
   }
 }
 
 document.querySelectorAll("[data-page]").forEach((button) => {
-  button.addEventListener("click", () => showPage(button.dataset.page));
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    showPage(button.dataset.page);
+  });
 });
 document.querySelectorAll("[data-open-stream]").forEach((button) => {
   button.addEventListener("click", () => showPage("stream"));
 });
-frame.addEventListener("load", () => {
+frame.addEventListener("load", () => frameLoading.classList.add("hidden"));
+frame.addEventListener("error", () => {
   frameLoading.classList.add("hidden");
+  streamPageRequested = false;
 });
 
 const effectsToggle = document.querySelector("#effects-toggle");
@@ -44,5 +55,4 @@ effectsToggle.addEventListener("change", () => {
   document.body.classList.toggle("effects-off", !effectsToggle.checked);
 });
 
-const isTauri = Boolean(window.__TAURI_INTERNALS__);
-document.body.classList.toggle("tauri-runtime", isTauri);
+document.body.classList.toggle("tauri-runtime", Boolean(window.__TAURI_INTERNALS__));
