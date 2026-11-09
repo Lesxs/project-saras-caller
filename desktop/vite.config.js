@@ -1,5 +1,8 @@
 import { defineConfig } from "vite";
-import { resolve } from "node:path";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const root = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   clearScreen: false,
@@ -11,8 +14,8 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
-        main: resolve(__dirname, "index.html"),
-        stream: resolve(__dirname, "stream.html")
+        main: resolve(root, "index.html"),
+        stream: resolve(root, "stream.html")
       }
     }
   }
