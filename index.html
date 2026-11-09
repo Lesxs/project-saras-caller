@@ -224,7 +224,7 @@ button:disabled,select:disabled,input:disabled{opacity:.55;cursor:not-allowed}
             <input id="max" type="number" min="1" max="10" value="5">
           </label>
           <label>Codec
-            <select id="cdc"><option value="gpu" selected>Automático (GPU)</option><option value="H264">H.264</option><option value="VP9">VP9</option><option value="AV1">AV1</option><option value="auto">Navegador decide</option></select>
+            <select id="cdc"><option value="gpu" selected>Automático (GPU)</option><option value="H264">H.264</option><option value="VP9">VP9</option><option value="AV1">AV1</option><option value="VP8">VP8</option><option value="auto">Navegador decide</option></select>
           </label>
           <label>Áudio
             <select id="asrc"><option value="win" selected>Somente a janela do jogo</option><option value="sys">Sistema inteiro</option><option value="none">Sem áudio</option></select>
@@ -475,7 +475,7 @@ async function start() {
   $('pv').srcObject = stream; $('pv').classList.remove('hide'); $('pvb').textContent = 'Esconder prévia';
   if (camWanted) { const m = await openCam(); if (m) note = (note ? note + ' ' : '') + m + ' A transmissão segue só com a tela.'; }
   say((note ? note + ' ' : '') + `Captura selecionada: ${actualCapture}. O navegador pode limitar a captura conforme o jogo e o sistema.`, !!note);
-  $('asrc').disabled = true; setCamUI();
+  $('asrc').disabled = true; $('cdc').disabled = true; setCamUI();
 
   const id = 'sv' + token();
   hp = new Peer(id, { config: RTC_CONFIG });
@@ -542,10 +542,36 @@ async function start() {
   });
 }
 
-const hw = {};
+// Smart Encoder: usa as capacidades WebRTC reais do navegador e a avaliação
+// MediaCapabilities. A página não escolhe diretamente NVENC/AMD VCN; o navegador
+// decide a implementação física e informa parte dela em getStats(), quando disponível.
+const codecProbe = Object.create(null);
+let autoCodec = 'H264';
+let probeSequence = 0;
+const CT = {
+  H264: 'video/H264;profile-level-id=42e01f;packetization-mode=1;level-asymmetry-allowed=1',
+  VP9: 'video/VP9;profile-id=0',
+  AV1: 'video/AV1',
+  VP8: 'video/VP8'
+};
+const NM = { H264: 'H.264', VP9: 'VP9', AV1: 'AV1', VP8: 'VP8' };
+function browserVideoCodecs() {
+  try {
+    const caps = RTCRtpSender.getCapabilities && RTCRtpSender.getCapabilities('video');
+    const found = new Set((caps && caps.codecs || []).map(c => String(c.mimeType || '').toLowerCase()));
+    // VP8 e H.264 são os codecs de vídeo de base esperados em WebRTC.
+    return found.size ? found : new Set(['video/h264', 'video/vp8']);
+  } catch (e) { return new Set(['video/h264', 'video/vp8']); }
+}
+function codecAvailable(name, caps) {
+  return caps.has('video/' + name.toLowerCase());
+}
 function chosen() {
-  const c = $('cdc').value; if (c !== 'gpu') return c;
-  return ['H264', 'VP9', 'AV1'].find(k => hw[k]) || 'H264';
+  const selected = $('cdc').value;
+  if (selected === 'gpu') return autoCodec;
+  if (selected === 'auto') return 'auto';
+  const c = codecProbe[selected];
+  return c && c.supported ? selected : autoCodec;
 }
 function pref(sdp) {
   const c = chosen(); if (c === 'auto') return sdp;
@@ -553,41 +579,102 @@ function pref(sdp) {
   const want = [];
   L.forEach(l => { const m = l.match(/^a=rtpmap:(\d+) ([A-Za-z0-9]+)\//); if (m && m[2].toUpperCase() === c) want.push(m[1]); });
   const fm = {}; L.forEach(l => { const m = l.match(/^a=fmtp:(\d+) (.*)/); if (m) fm[m[1]] = m[2]; });
-  const rank = pt => { const f = fm[pt] || '', pl = (f.match(/profile-level-id=([0-9a-fA-F]{6})/) || [])[1] || '', pf = pl.slice(0, 2).toLowerCase();
-    return (/packetization-mode=1/.test(f) ? 100 : 0) + (pf === '64' ? 30 : pf === '4d' ? 20 : pf === '42' ? 10 : 0) + (parseInt(pl.slice(4), 16) || 0) / 100; };
+  // Para H.264, favorece primeiro o perfil baseline/constrained-baseline,
+  // mais interoperável em WebRTC, sem remover outros perfis ou RTX/FEC.
+  const rank = pt => {
+    const f = fm[pt] || '', pl = (f.match(/profile-level-id=([0-9a-fA-F]{6})/) || [])[1] || '';
+    const pf = pl.slice(0, 4).toLowerCase();
+    return (/(?:42e0|42c0)/.test(pf) ? 300 : pf.startsWith('42') ? 250 : pf.startsWith('4d') ? 200 : pf.startsWith('64') ? 100 : 0)
+      + (/packetization-mode=1/.test(f) ? 20 : 0);
+  };
   if (c === 'H264') want.sort((a, b) => rank(b) - rank(a));
   const parts = L[mi].split(' '), pts = parts.slice(3);
   if (!want.length) return sdp;
   L[mi] = parts.slice(0, 3).concat(want.filter(x => pts.includes(x)), pts.filter(x => !want.includes(x))).join(' ');
   return L.join('\r\n');
 }
-
-const CT = { H264: 'video/H264;level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=640c34', VP9: 'video/VP9;profile-id=0', AV1: 'video/AV1' };
-const NM = { H264: 'H.264', VP9: 'VP9', AV1: 'AV1' };
 function gpuInfo() {
   try {
-    const g = document.createElement('canvas').getContext('webgl'), r = g.getParameter(g.getExtension('WEBGL_debug_renderer_info').UNMASKED_RENDERER_WEBGL) || '';
-    const n = (r.replace(/^ANGLE \((.*)\)$/, '$1').split(',')[1] || r).replace(/\s*\(0x[0-9a-f]+\).*$/i, '').trim();
-    const e = /nvidia|geforce|rtx|gtx/i.test(r) ? 'NVENC (NVIDIA)' : /amd|radeon/i.test(r) ? 'AMF/VCN (AMD)' : /intel/i.test(r) ? 'Quick Sync (Intel)' : '';
-    return n ? { name: n, enc: e } : null;
+    const canvas = document.createElement('canvas');
+    const gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+    if (!gl) return null;
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const renderer = ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    const raw = String(renderer || '');
+    const cleaned = raw.replace(/^ANGLE \((.*)\)$/, '$1').replace(/\s*\(0x[0-9a-f]+\).*$/i, '').trim();
+    const vendor = /nvidia|geforce|rtx|gtx/i.test(raw) ? 'NVIDIA' : /amd|radeon/i.test(raw) ? 'AMD' : /intel/i.test(raw) ? 'Intel' : 'GPU não identificada';
+    return { name: cleaned || 'GPU não identificada', vendor, masked: !ext };
   } catch (e) { return null; }
 }
-async function probe() {
-  const mc = navigator.mediaCapabilities; if (!mc || !mc.encodingInfo) return;
-  const h = +$('res').value, f = +$('fps').value, b = (+$('br').value || 6000) * 1000, res = [];
-  for (const k of Object.keys(CT)) {
-    let ok = null;
-    try { ok = await mc.encodingInfo({ type: 'webrtc', video: { contentType: CT[k], width: Math.round(h * 16 / 9), height: h, bitrate: b, framerate: f } }); } catch (e) {}
-    const t = !ok || !ok.supported ? 'não suportado' : ok.powerEfficient ? 'GPU' : 'software';
-    hw[k] = t === 'GPU';
-    const o = $('cdc').querySelector('option[value="' + k + '"]'); if (o) o.textContent = NM[k] + ' (' + t + ')';
-    res.push(NM[k] + ' ' + (t === 'GPU' ? 'sim' : 'não'));
-  }
-  const og = $('cdc').querySelector('option[value="gpu"]'); if (og) og.textContent = 'Automático (GPU → ' + NM[chosen()] + ')';
-  const g = gpuInfo();
-  $('hw').textContent = 'Codificação por GPU neste PC: ' + res.join(' · ') + '\nCodec usado na transmissão: ' + (NM[chosen()] || 'definido pelo navegador') + (g ? '\nPlaca: ' + g.name + (g.enc ? ' · encoder de hardware provável: ' + g.enc : '') : '');
+function codecStatusText(name, info) {
+  if (!info || !info.supported) return 'não suportado';
+  if (info.powerEfficient === true) return 'eficiente · hardware provável';
+  if (info.powerEfficient === false) return 'sem aceleração eficiente reportada';
+  return 'suportado · aceleração não confirmada';
 }
-['res', 'fps', 'br', 'cdc'].forEach(k => $(k).addEventListener('change', probe));
+async function probe() {
+  const run = ++probeSequence;
+  const caps = browserVideoCodecs();
+  const mc = navigator.mediaCapabilities;
+  const h = +$('res').value, f = +$('fps').value, b = (+$('br').value || 6000) * 1000;
+  const results = {};
+  for (const k of Object.keys(CT)) {
+    const browserSupported = codecAvailable(k, caps);
+    let info = { supported: browserSupported, smooth: null, powerEfficient: null, source: 'RTCRtpSender' };
+    if (browserSupported && mc && typeof mc.encodingInfo === 'function') {
+      try {
+        const measured = await mc.encodingInfo({ type: 'webrtc', video: {
+          contentType: CT[k], width: Math.round(h * 16 / 9), height: h,
+          bitrate: b, framerate: f
+        }});
+        info = { supported: !!measured.supported && browserSupported,
+          smooth: typeof measured.smooth === 'boolean' ? measured.smooth : null,
+          powerEfficient: typeof measured.powerEfficient === 'boolean' ? measured.powerEfficient : null,
+          source: 'MediaCapabilities + RTCRtpSender' };
+      } catch (e) {
+        // Mantém a informação de codec negociável, mas não presume aceleração.
+      }
+    }
+    results[k] = info;
+  }
+  if (run !== probeSequence) return;
+  Object.keys(codecProbe).forEach(k => delete codecProbe[k]);
+  Object.assign(codecProbe, results);
+
+  // Automático: AV1 só entra primeiro quando o navegador reporta eficiência
+  // energética (indício de hardware); depois VP9; H.264 fica como fallback
+  // amplamente compatível. VP8 é o último fallback WebRTC.
+  const efficient = ['AV1', 'VP9', 'H264'].find(k => results[k] && results[k].supported && results[k].powerEfficient === true && results[k].smooth !== false);
+  const smoothFallback = ['H264', 'VP8', 'VP9', 'AV1'].find(k => results[k] && results[k].supported && results[k].smooth === true);
+  autoCodec = efficient || smoothFallback || (results.H264 && results.H264.supported ? 'H264' :
+    (results.VP8 && results.VP8.supported ? 'VP8' :
+      (['VP9', 'AV1'].find(k => results[k] && results[k].supported) || 'auto')));
+
+  for (const k of Object.keys(CT)) {
+    const option = $('cdc').querySelector('option[value="' + k + '"]');
+    if (option) {
+      option.disabled = !results[k].supported;
+      option.textContent = NM[k] + ' (' + codecStatusText(k, results[k]) + ')';
+    }
+  }
+  const og = $('cdc').querySelector('option[value="gpu"]');
+  if (og) og.textContent = 'Automático (Smart Encoder → ' + (NM[autoCodec] || autoCodec) + ')';
+  const g = gpuInfo();
+  const browser = /Edg\//.test(navigator.userAgent) ? 'Edge' : /Firefox\//.test(navigator.userAgent) ? 'Firefox' : /Brave/i.test(navigator.userAgent) ? 'Brave/Chromium' : /Chrome\//.test(navigator.userAgent) ? 'Chrome/Chromium' : 'navegador não identificado';
+  const lines = Object.keys(CT).map(k => NM[k] + ': ' + codecStatusText(k, results[k]));
+  const selected = chosen();
+  const selectedLabel = selected === 'auto' ? 'decisão do navegador' : (NM[selected] || selected);
+  $('hw').textContent = 'Smart Encoder · ' + browser + '\n' +
+    'Codecs disponíveis: ' + lines.join(' · ') + '\n' +
+    'Preferência automática: ' + (NM[autoCodec] || autoCodec) + ' · seleção atual: ' + selectedLabel +
+    (g ? '\nGPU reportada: ' + g.name + ' · fabricante provável: ' + g.vendor + (g.masked ? ' · identificação limitada pelo navegador' : '') : '') +
+    '\nAceleração física é decidida pelo navegador; a confirmação real aparece nas métricas do encoder durante a transmissão.';
+}
+['res', 'fps', 'br'].forEach(k => $(k).addEventListener('change', probe));
+$('cdc').addEventListener('change', () => {
+  probe();
+  if (stream) say('A preferência de codec será aplicada às novas conexões; espectadores já conectados mantêm o codec negociado.');
+});
 probe();
 
 let camWanted = false;
@@ -807,7 +894,7 @@ async function stats() {
       const bgp = document.visibilityState !== 'visible';
       const localText = `Captura ${Math.round(capF)} fps · codificação ${Math.round(encF)} fps · envio ${Math.round(sntF)} fps · ${encMs.toFixed(1)} ms/quadro`;
       const netText = `${kbps} kbps enviados${avail ? ` · banda estimada ${avail} kbps` : ''}${rtt ? ` · RTT ${rtt} ms` : ''} · limite ${lim}`;
-      summary.push(`${v.nick}: ${localText}\n${cod} · ${o.encoderImplementation || '?'}${o.powerEfficientEncoder ? ' (GPU)' : ''} · ${netText}`);
+      summary.push(`${v.nick}: ${localText}\n${cod} · ${o.encoderImplementation || 'encoder não identificado'}${o.powerEfficientEncoder === true ? ' (GPU eficiente reportada)' : o.powerEfficientEncoder === false ? ' (GPU eficiente não reportada)' : ' (aceleração não informada)'} · ${netText}`);
       const remoteText = remote.recF !== undefined ? `Recebido ${Math.round(remote.recF)} fps · decodificado ${Math.round(remote.decF || 0)} fps · perda ${(100 * (remote.lossRate || 0)).toFixed(1)}% · descarte ${(100 * (remote.dropRate || 0)).toFixed(1)}% · jitter ${Math.round((remote.jitter || 0) * 1000)} ms · RTT ${Math.round(remote.rtt || 0)} ms · congelamentos ${remote.freezes || 0}` : 'Aguardando métricas do espectador…';
       details.push({ nick: v.nick, localText, remoteText, why, bgp, drop });
     } catch (e) {
@@ -873,7 +960,7 @@ async function vstats() {
       }
       $('vst').textContent = `Recebido ${Math.round(recF)} fps · decodificado ${Math.round(decF)} fps · ${kbps} kbps\n` +
         `Perda ${(100 * lossRate).toFixed(1)}% · descarte ${(100 * dropRate).toFixed(1)}% · jitter ${Math.round(jitter * 1000)} ms · congelamentos ${now.freezes}\n` +
-        `${((codecs[i.codecId] || {}).mimeType || '?').replace('video/', '')} · ${i.decoderImplementation || '?'}${i.powerEfficientDecoder ? ' (GPU)' : ''} · RTT ${Math.round(rtt)} ms` +
+        `${((codecs[i.codecId] || {}).mimeType || '?').replace('video/', '')} · ${i.decoderImplementation || 'decoder não identificado'}${i.powerEfficientDecoder === true ? ' (GPU eficiente reportada)' : i.powerEfficientDecoder === false ? ' (GPU eficiente não reportada)' : ' (aceleração não informada)'} · RTT ${Math.round(rtt)} ms` +
         (a ? `\nÁudio: jitter ${Math.round(now.audioJitter * 1000)} ms · perda ${Math.max(0, now.audioLost)} pacotes` : '');
       if (vconn && vconn.open && now.t - (vreportAt || 0) >= 3500) {
         vconn.send({ t: 'qstats', recF, decF, lossRate, dropRate, rtt, jitter, freezes: vfreezePending, audioJitter: now.audioJitter });
@@ -946,7 +1033,7 @@ function stop() {
   if (hp) hp.destroy();
   stream = hp = null; fh = []; senderStatsPrev.clear(); pend.clear(); viewers.clear(); draw();
   $('live').classList.add('hide'); $('stop').classList.add('hide'); $('go').classList.remove('hide');
-  $('asrc').disabled = false; $('visibility').disabled = false;
+  $('asrc').disabled = false; $('cdc').disabled = false; $('visibility').disabled = false;
   say('Transmissão encerrada.'); tag('Offline');
 }
 
