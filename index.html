@@ -372,7 +372,53 @@ function watchViewerTracks(mediaStream) {
   });
 }
 const pend = new Map(), viewers = new Map(), lives = new Map();
-const post = o => fetch(NTFY + topic, { method: 'POST', body: JSON.stringify(o) }).catch(() => {});
+let livePublishInFlight = false, liveDirectoryWarning = false;
+async function post(o) {
+  try {
+    const response = await fetch(NTFY + topic, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify(o)
+    });
+    return { ok: response.ok, status: response.status };
+  } catch (e) {
+    return { ok: false, status: 0 };
+  }
+}
+
+// Confirma o anúncio no ntfy antes de considerar a live publicada na lista.
+// Se a rede falhar, tenta novamente sem interromper a transmissão WebRTC.
+async function announceLive(id) {
+  if (livePublishInFlight || !stream || myId !== id || !topic) return;
+  livePublishInFlight = true;
+  const delays = [0, 1200, 3000, 6000];
+  let result = { ok: false, status: 0 };
+  try {
+    for (let attempt = 0; attempt < delays.length; attempt++) {
+      if (!stream || myId !== id || !topic) return;
+      if (delays[attempt]) await new Promise(resolve => setTimeout(resolve, delays[attempt]));
+      if (!stream || myId !== id || !topic) return;
+      result = await post({
+        t: 'on', id,
+        name: $('nick').value.trim().slice(0, 20) || 'Streamer',
+        visibility: liveVisibility
+      });
+      if (result.ok) {
+        if (liveDirectoryWarning && myId === id) say('');
+        liveDirectoryWarning = false;
+        return;
+      }
+    }
+    if (myId === id && stream) {
+      liveDirectoryWarning = true;
+      const reason = result.status ? 'HTTP ' + result.status : 'falha de rede/CORS';
+      say('A transmissão está ativa, mas não foi possível publicá-la na lista do grupo (' + reason + '). O site tentará novamente automaticamente.', true);
+    }
+  } finally {
+    livePublishInFlight = false;
+  }
+}
 
 /* ---------- Grupo e lista de lives ---------- */
 async function setGroup(code) {
@@ -492,9 +538,9 @@ async function start() {
     streamerReconnectAttempt = 0; clearTimeout(streamerReconnectTimer); streamerReconnectTimer = null;
     if (myId === id) { say(''); return; }
     myId = id; lives.delete(id); drawLives();
-    post({ t: 'on', id, name: $('nick').value.trim().slice(0, 20) || 'Streamer', visibility: liveVisibility });
+    announceLive(id);
     clearInterval(liveHeartbeatTimer);
-    liveHeartbeatTimer = setInterval(() => { if (myId === id && stream && hp && !hp.destroyed) post({ t: 'on', id, name: $('nick').value.trim().slice(0, 20) || 'Streamer', visibility: liveVisibility }); }, 25000);
+    liveHeartbeatTimer = setInterval(() => { if (myId === id && stream && hp && !hp.destroyed) announceLive(id); }, 25000);
     $('visibility').disabled = true;
     $('live').classList.remove('hide'); tag('Ao vivo', 1);
     $('go').classList.add('hide'); $('stop').classList.remove('hide');
