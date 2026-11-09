@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0b0f24">
+    <meta name="description" content="S.A.R.A.S — aplicativo desktop de transmissão entre amigos.">
+    <title>S.A.R.A.S</title>
+  </head>
+  <body>
+    <div id="app">
+      <main class="shell">
+        <header class="topbar">
+          <div class="brand">
+            <div class="brand-mark" aria-hidden="true">
+              <svg viewBox="0 0 48 48" fill="none">
+                <path d="M24 4.5 41 14v20L24 43.5 7 34V14L24 4.5Z" stroke="currentColor" stroke-width="2"/>
+                <path d="m17 18 7-4 7 4v12l-7 4-7-4V18Z" stroke="currentColor" stroke-width="2"/>
+                <path d="m17 18 7 4 7-4M24 22v12" stroke="currentColor" stroke-width="2"/>
+              </svg>
+            </div>
+            <div>
+              <div class="brand-name">S.A.R.A.S</div>
+              <div class="brand-caption">DESKTOP</div>
+            </div>
+          </div>
+          <span class="version">PRÉVIA 0.1.0</span>
+        </header>
+
+        <section class="hero">
+          <div class="eyebrow"><span class="status-dot"></span> AMBIENTE DESKTOP INICIALIZADO</div>
+          <h1>Sua transmissão.<br><span>Do seu jeito.</span></h1>
+          <p class="intro">Esta é a primeira estrutura do aplicativo S.A.R.A.S para Windows. A interface e os componentes de transmissão serão integrados nas próximas etapas.</p>
+          <div class="feature-grid">
+            <article class="feature">
+              <div class="feature-icon">01</div>
+              <h2>Leve por projeto</h2>
+              <p>Base desktop com Tauri, preparada para evoluir sem carregar recursos desnecessários.</p>
+            </article>
+            <article class="feature">
+              <div class="feature-icon">02</div>
+              <h2>Transmissão em tempo real</h2>
+              <p>Arquitetura planejada para reutilizar WebRTC e a infraestrutura atual de grupos.</p>
+            </article>
+            <article class="feature">
+              <div class="feature-icon">03</div>
+              <h2>Windows 10 e 11</h2>
+              <p>Primeiro destino de compilação e testes do aplicativo.</p>
+            </article>
+          </div>
+          <div class="notice">
+            <span class="notice-icon">i</span>
+            <p><strong>Etapa 1 concluída:</strong> estrutura inicial criada. Ainda não há transmissão nesta prévia. O próximo passo será integrar e testar os recursos do projeto atual.</p>
+          </div>
+        </section>
+
+        <footer>
+          <span>S.A.R.A.S <span class="muted">· Projeto desktop</span></span>
+          <span class="runtime" id="runtime">Verificando ambiente…</span>
+        </footer>
+      </main>
+    </div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
