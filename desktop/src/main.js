@@ -1,3 +1,5 @@
+import "./styles.css";
+
 const runtime = document.querySelector("#runtime");
 
 if (window.__TAURI_INTERNALS__) {
