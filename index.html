@@ -8,8 +8,6 @@
 <meta name="theme-color" content="#141a30">
 <link rel="icon" type="image/png" href="icon-192.png?v=2">
 <link rel="apple-touch-icon" href="icon-192.png?v=2">
-<link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
-<link rel="preconnect" href="https://ntfy.sh" crossorigin>
 <style>
 :root{color-scheme:dark;--bg:#0b0f24;--pn:rgba(24,29,58,.84);--in:rgba(9,12,30,.75);--ln:#303a6e;--fg:#f2f3f5;--mut:#9aa3c7;--ac:#5865f2;--ac2:#4752c4;--ok:#23a55a;--bad:#f23f43}
 *{box-sizing:border-box}
@@ -123,9 +121,6 @@ main{max-width:920px;gap:16px}
 #vwrap{overflow:hidden;border-radius:12px;background:#000}
 #v{display:block;object-fit:contain}
 button,select,input{touch-action:manipulation}
-.update-notice{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid rgba(88,101,242,.55);border-radius:10px;background:rgba(18,24,58,.92);font-size:13px}
-.update-notice button{white-space:nowrap;min-height:38px}
-@media(max-width:520px){.update-notice{align-items:stretch;flex-direction:column}.update-notice button{width:100%}}
 button:disabled,select:disabled,input:disabled{opacity:.55;cursor:not-allowed}
 @media (min-width:760px){
   .primary-settings{grid-template-columns:repeat(4,minmax(0,1fr))}
@@ -183,10 +178,6 @@ button:disabled,select:disabled,input:disabled{opacity:.55;cursor:not-allowed}
 <main>
   <header><img src="banner.jpg" width="1600" height="455" alt="S.A.R.A.S"><h1>Project S.A.R.A.S Caller</h1><button id="fx" class="fxbtn" type="button" aria-pressed="true">Fundo: ligado</button><span id="tag" class="tag">Offline</span></header>
   <p id="msg" class="mut"></p>
-  <div id="updateNotice" class="update-notice hide" role="status" aria-live="polite">
-    <span id="updateText">Uma atualização está pronta.</span>
-    <button id="updateNow" class="sec" type="button">Atualizar agora</button>
-  </div>
 
   <!-- Grupo -->
   <div id="gbox" class="box">
@@ -331,7 +322,7 @@ button:disabled,select:disabled,input:disabled{opacity:.55;cursor:not-allowed}
   </div>
 </div>
 
-<script defer src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script>
 let pipWin = null;
 const $ = id => document.getElementById(id) || (pipWin && pipWin.document.getElementById(id));
@@ -355,25 +346,24 @@ const senderStatsPrev = new Map();
 let viewerTargetId = null, viewerNick = '', viewerRequestedPublic = false, viewerReconnectTimer = null, viewerIceTimer = null, viewerRetry = 0, viewerLeaving = false, captureInfo = 'Captura ainda não iniciada';
 let streamerReconnectTimer = null, streamerReconnectAttempt = 0;
 let liveHeartbeatTimer = null, liveExpiryTimer = null, viewerConnectTimer = null;
-let viewerHealth = { videoStalls: 0, lastNotice: 0, trackTimers: [] };
-function resetViewerHealth() { (viewerHealth.trackTimers || []).forEach(clearTimeout); viewerHealth = { videoStalls: 0, lastNotice: 0, trackTimers: [] }; }
+let viewerHealth = { videoStalls: 0, audioStalls: 0, lastNotice: 0, trackTimer: null };
+function resetViewerHealth() { clearTimeout(viewerHealth.trackTimer); viewerHealth = { videoStalls: 0, audioStalls: 0, lastNotice: 0, trackTimer: null }; }
 function watchViewerTracks(mediaStream) {
   resetViewerHealth();
-  mediaStream.getAudioTracks().forEach(track => {
-    let muteTimer = null;
+  const audio = mediaStream.getAudioTracks();
+  audio.forEach(track => {
     track.addEventListener('mute', () => {
-      clearTimeout(muteTimer);
-      muteTimer = setTimeout(() => {
+      clearTimeout(viewerHealth.trackTimer);
+      viewerHealth.trackTimer = setTimeout(() => {
         if (!viewerLeaving && vcall && track.muted && Date.now() - viewerHealth.lastNotice > 12000) {
           viewerHealth.lastNotice = Date.now();
           say('O áudio foi interrompido. Tentando recuperar a transmissão…', true);
           scheduleViewerReconnect('O fluxo de áudio foi interrompido.');
         }
-      }, 7000);
-      viewerHealth.trackTimers.push(muteTimer);
+      }, 6000);
     });
-    track.addEventListener('unmute', () => { clearTimeout(muteTimer); muteTimer = null; });
-    track.addEventListener('ended', () => { if (!viewerLeaving && vcall) { say('A faixa de áudio foi encerrada. A imagem continuará disponível.', true); } });
+    track.addEventListener('unmute', () => { clearTimeout(viewerHealth.trackTimer); viewerHealth.trackTimer = null; });
+    track.addEventListener('ended', () => { if (!viewerLeaving && vcall) scheduleViewerReconnect('O fluxo de áudio foi encerrado.'); });
   });
   mediaStream.getVideoTracks().forEach(track => {
     track.addEventListener('mute', () => { if (!viewerLeaving && vcall) showVideoWait('A imagem foi interrompida temporariamente. Tentando retomar…'); });
@@ -459,15 +449,14 @@ function constraints() {
 $('go').onclick = start; $('stop').onclick = stop;
 
 async function start() {
-  if (!window.Peer) return say('Preparando a conexão. Aguarde alguns segundos e tente novamente.', true);
   if (!actx) { try { actx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
   if (actx && actx.state === 'suspended') actx.resume();
   if (!grp) return say('Entre em um grupo primeiro.', true);
   liveVisibility = $('visibility').value === 'public' ? 'public' : 'private';
   const mode = $('asrc').value, raw = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
   const opts = { video: constraints(), audio: mode === 'none' || (mode === 'win' && !WIN_AUDIO) ? false : raw };
-  if (mode === 'win' && WIN_AUDIO) { opts.windowAudio = 'window'; opts.systemAudio = 'exclude'; }
-  if (mode === 'sys') { opts.windowAudio = 'system'; opts.systemAudio = 'include'; }
+  if (mode === 'win' && WIN_AUDIO) opts.windowAudio = 'window';
+  if (mode === 'sys') opts.windowAudio = 'system';
   try { stream = await navigator.mediaDevices.getDisplayMedia(opts); } catch (e) { return say('Captura cancelada.'); }
   let note = '';
   const surf = stream.getVideoTracks()[0].getSettings().displaySurface, at = stream.getAudioTracks();
@@ -480,7 +469,7 @@ async function start() {
   vt.contentHint = 'motion';
   const captureSettings = vt.getSettings();
   const actualCapture = `${captureSettings.width || '?'}×${captureSettings.height || '?'} · ${Math.round(captureSettings.frameRate || 0)} fps`;
-  captureInfo = `${actualCapture} · áudio: ${at.length ? 'capturado' : 'não capturado'}`;
+  captureInfo = actualCapture;
   vt.onended = stop;
   vt.addEventListener('mute', () => {
     if (!stream || vt.readyState !== 'live') return;
@@ -491,11 +480,6 @@ async function start() {
     if (!stream || vt.readyState !== 'live') return;
     say('Captura de tela retomada.');
     viewers.forEach(v => { try { v.conn.send({ t: 'capture', state: 'live' }); } catch (e) {} });
-  });
-  at.forEach(track => {
-    track.addEventListener('mute', () => viewers.forEach(v => { try { v.conn.send({ t: 'audio', state: 'paused' }); } catch (e) {} }));
-    track.addEventListener('unmute', () => viewers.forEach(v => { try { v.conn.send({ t: 'audio', state: 'live' }); } catch (e) {} }));
-    track.addEventListener('ended', () => viewers.forEach(v => { try { v.conn.send({ t: 'audio', state: 'ended' }); } catch (e) {} }));
   });
   $('pv').srcObject = stream; $('pv').classList.remove('hide'); $('pvb').textContent = 'Esconder prévia';
   if (camWanted) { const m = await openCam(); if (m) note = (note ? note + ' ' : '') + m + ' A transmissão segue só com a tela.'; }
@@ -779,29 +763,16 @@ function accept(id) {
   p.conn.send({ t: 'ok' });
   p.conn.send({ t: 'pos', pos: $('hpos').value });
   sendCam(id);
-  let recoveryNotified = false, recoveryTimer = null;
-  if (call.peerConnection) {
-    const pc = call.peerConnection;
-    const checkRecovery = () => {
-      applyBr(call);
-      const state = pc.connectionState, ice = pc.iceConnectionState;
-      if ((state === 'failed' || state === 'closed' || ice === 'failed') && !recoveryNotified) {
-        recoveryNotified = true; clearTimeout(recoveryTimer); recoveryTimer = null;
-        try { p.conn.send({ t: 'reconnect' }); } catch (e) {}
-      } else if (state === 'connected' && (ice === 'connected' || ice === 'completed')) {
-        clearTimeout(recoveryTimer); recoveryTimer = null; recoveryNotified = false;
-      } else if ((state === 'disconnected' || ice === 'disconnected') && !recoveryTimer && !recoveryNotified) {
-        recoveryTimer = setTimeout(() => {
-          recoveryTimer = null;
-          if (pc.connectionState === 'disconnected' || pc.iceConnectionState === 'disconnected') {
-            recoveryNotified = true; try { p.conn.send({ t: 'reconnect' }); } catch (e) {}
-          }
-        }, 6500);
-      }
-    };
-    pc.addEventListener('connectionstatechange', checkRecovery);
-    pc.addEventListener('iceconnectionstatechange', checkRecovery);
-  }
+  let recoveryNotified = false;
+  if (call.peerConnection) call.peerConnection.addEventListener('connectionstatechange', () => {
+    applyBr(call);
+    const state = call.peerConnection.connectionState;
+    if (state === 'connected') recoveryNotified = false;
+    if ((state === 'failed' || state === 'closed') && !recoveryNotified) {
+      recoveryNotified = true;
+      try { p.conn.send({ t: 'reconnect' }); } catch (e) {}
+    }
+  });
   applyBr(call);
   draw();
 }
@@ -844,13 +815,10 @@ function adaptViewer(v, d) {
   const drop = Math.max(0, +d.dropRate || 0), rtt = Math.max(0, +d.rtt || 0);
   const jitter = Math.max(0, +d.jitter || 0), freezes = Math.max(0, +d.freezes || 0);
   const local = v.localDiag || {};
-  const frameBudget = 1000 / Math.max(1, p.f);
-  const cpuLimited = local.lim === 'cpu' || (local.encF > 0 && local.capF > 0 && local.encF < local.capF * 0.88) || (local.encMs > frameBudget * 1.12);
-  const bandwidthLimited = local.lim === 'bandwidth' || (local.avail > 0 && local.avail < p.b * 1.18);
-  const audioJitter = Math.max(0, +d.audioJitter || 0), audioLoss = Math.max(0, +d.audioLossRate || 0);
-  const networkLimited = bandwidthLimited || loss > 0.035 || rtt > 450 || jitter > 0.055 || audioJitter > 0.075 || audioLoss > 0.08;
+  const cpuLimited = local.lim === 'cpu' || (local.encF > 0 && local.capF > 0 && local.encF < local.capF * 0.88);
+  const networkLimited = local.lim === 'bandwidth' || loss > 0.035 || rtt > 450 || jitter > 0.055;
   const weak = cpuLimited || decF < p.f * 0.84 || recF < p.f * 0.84 || drop > 0.12 || networkLimited || freezes > 0;
-  const strong = decF >= p.f * 0.94 && recF >= p.f * 0.94 && loss < 0.012 && drop < 0.035 && (!rtt || rtt < 280) && jitter < 0.03 && audioJitter < 0.035 && audioLoss < 0.025 && freezes === 0;
+  const strong = decF >= p.f * 0.94 && recF >= p.f * 0.94 && loss < 0.012 && drop < 0.035 && (!rtt || rtt < 280) && jitter < 0.03 && freezes === 0;
   if (weak) {
     v.badSamples = (v.badSamples || 0) + 1; v.goodSamples = 0;
     if (v.badSamples >= 2 && v.tierIndex < profiles.length - 1) {
@@ -876,9 +844,7 @@ async function applyBr(call) {
     const p = s.getParameters();
     if (!p.encodings || !p.encodings.length) p.encodings = [{}];
     const e = p.encodings[0];
-    const availableCap = v && v.auto && v.localDiag && v.localDiag.avail > 0 ? Math.max(250, v.localDiag.avail * 0.78) : max;
-    const targetKbps = Math.min(max, q.b || max, availableCap);
-    e.maxBitrate = Math.round(targetKbps * 1000);
+    e.maxBitrate = Math.min(max, q.b || max) * 1000;
     e.scaleResolutionDownBy = q.h && capH > q.h ? capH / q.h : 1;
     if (q.f) e.maxFramerate = q.f; else delete e.maxFramerate;
     p.degradationPreference = $('prio').value === 'res' ? 'maintain-resolution' : 'maintain-framerate';
@@ -925,15 +891,13 @@ async function stats() {
       const avail = cp && cp.availableOutgoingBitrate ? Math.round(cp.availableOutgoingBitrate / 1000) : 0;
       const rtt = cp && cp.currentRoundTripTime ? Math.round(cp.currentRoundTripTime * 1000) : 0;
       const cod = ((codecs[o.codecId] || {}).mimeType || '?').replace('video/', '');
-      v.localDiag = { capF, encF, sntF, encMs, lim, avail, rtt, kbps, powerEfficient: o.powerEfficientEncoder === true };
+      v.localDiag = { capF, encF, sntF, encMs, lim, avail, rtt, kbps, powerEfficient: !!o.powerEfficientEncoder };
       const remote = v.remoteStats || {};
       let why = 'Sem limitação reportada';
       if (lim === 'cpu') why = 'Limite de CPU/encoder';
       else if (lim === 'bandwidth') why = 'Limite de banda';
       else if (src && capF > 0 && capF < (+$('fps').value || 60) * 0.9) why = 'Captura abaixo da meta';
       else if (encF > 0 && capF > 0 && encF < capF * 0.88) why = 'Codificação abaixo da captura';
-      else if (encMs > (1000 / (+$('fps').value || 60)) * 1.12) why = 'Encoder demorando mais que o orçamento por quadro';
-      else if (avail > 0 && avail < (+$('br').value || 6000) * 1.18) why = 'Banda de saída limitada';
       else if (remote.lossRate > 0.08 || remote.rtt > 700 || remote.jitter > 0.08) why = 'Rede instável: perda, latência ou jitter elevados';
       else if (remote.lossRate > 0.035 || remote.dropRate > 0.12 || remote.rtt > 450 || remote.jitter > 0.035) why = 'Qualidade de rede oscilando';
       const bgp = document.visibilityState !== 'visible';
@@ -989,23 +953,26 @@ async function vstats() {
       const jitter = now.jitter;
       const kbps = Math.round((now.bytes - vprev.bytes) * 8 / (now.t - vprev.t));
       const freezeDelta = Math.max(0, now.freezes - vprev.freezes); vfreezePending += freezeDelta;
-      const audioTracks = $('v').srcObject ? $('v').srcObject.getAudioTracks() : [];
-      const audioTrackState = audioTracks.length ? audioTracks.map(t => t.muted ? 'pausada' : t.readyState === 'live' ? 'ativa' : 'encerrada').join(', ') : 'sem faixa de áudio';
-      const audioExpected = audioTracks.some(t => t.readyState === 'live' && !t.muted);
-      const audioLossRate = a ? Math.max(0, a.packetsLost || 0) / Math.max(1, (a.packetsReceived || 0) + (a.packetsLost || 0)) : 0;
+      const audioActive = a && (now.audioPackets > (vprev.audioPackets || 0) || now.audioBytes > (vprev.audioBytes || 0));
+      const audioExpected = $('v').srcObject && $('v').srcObject.getAudioTracks().some(t => t.readyState === 'live' && !t.muted);
       // Só considera travamento depois de várias amostras, evitando reconexões por oscilações curtas.
       viewerHealth.videoStalls = (recF < 1 && decF < 1 && vcall.peerConnection.connectionState === 'connected') ? viewerHealth.videoStalls + 1 : 0;
+      viewerHealth.audioStalls = (audioExpected && a && !audioActive) ? viewerHealth.audioStalls + 1 : 0;
       if (viewerHealth.videoStalls >= 4 && Date.now() - viewerHealth.lastNotice > 15000) {
         viewerHealth.lastNotice = Date.now(); viewerHealth.videoStalls = 0;
         say('A imagem parou de chegar. Tentando recuperar a transmissão…', true);
-        scheduleViewerReconnect(audioExpected ? 'O vídeo parou enquanto a faixa de áudio continua ativa.' : 'O fluxo de vídeo parou de chegar.');
+        scheduleViewerReconnect(audioActive ? 'O vídeo parou enquanto o áudio continuou.' : 'O fluxo de vídeo parou de chegar.');
+      } else if (viewerHealth.audioStalls >= 5 && recF > 2 && Date.now() - viewerHealth.lastNotice > 15000) {
+        viewerHealth.lastNotice = Date.now(); viewerHealth.audioStalls = 0;
+        say('O áudio parece ter parado. Tentando recuperar a transmissão…', true);
+        scheduleViewerReconnect('O fluxo de áudio parou enquanto o vídeo continuou.');
       }
       $('vst').textContent = `Recebido ${Math.round(recF)} fps · decodificado ${Math.round(decF)} fps · ${kbps} kbps\n` +
         `Perda ${(100 * lossRate).toFixed(1)}% · descarte ${(100 * dropRate).toFixed(1)}% · jitter ${Math.round(jitter * 1000)} ms · congelamentos ${now.freezes}\n` +
         `${((codecs[i.codecId] || {}).mimeType || '?').replace('video/', '')} · ${i.decoderImplementation || 'decoder não identificado'}${i.powerEfficientDecoder === true ? ' (GPU eficiente reportada)' : i.powerEfficientDecoder === false ? ' (GPU eficiente não reportada)' : ' (aceleração não informada)'} · RTT ${Math.round(rtt)} ms` +
-        (a ? `\nÁudio: ${audioTrackState} · jitter ${Math.round(now.audioJitter * 1000)} ms · perda ${Math.max(0, now.audioLost)} pacotes (${(audioLossRate * 100).toFixed(1)}%)` : `\nÁudio: ${audioTrackState}`);
+        (a ? `\nÁudio: jitter ${Math.round(now.audioJitter * 1000)} ms · perda ${Math.max(0, now.audioLost)} pacotes` : '');
       if (vconn && vconn.open && now.t - (vreportAt || 0) >= 3500) {
-        vconn.send({ t: 'qstats', recF, decF, lossRate, dropRate, rtt, jitter, freezes: vfreezePending, audioJitter: now.audioJitter, audioLossRate, audioPresent: audioExpected });
+        vconn.send({ t: 'qstats', recF, decF, lossRate, dropRate, rtt, jitter, freezes: vfreezePending, audioJitter: now.audioJitter });
         vreportAt = now.t; vfreezePending = 0;
       }
     }
@@ -1077,7 +1044,6 @@ function stop() {
   $('live').classList.add('hide'); $('stop').classList.add('hide'); $('go').classList.remove('hide');
   $('asrc').disabled = false; $('cdc').disabled = false; $('visibility').disabled = false;
   say('Transmissão encerrada.'); tag('Offline');
-  setTimeout(applyPendingUpdate, 1000);
 }
 
 $('pvb').onclick = () => {
@@ -1110,11 +1076,11 @@ function join(id, isPublic = false) {
 function scheduleViewerReconnect(reason) {
   clearTimeout(viewerConnectTimer); viewerConnectTimer = null;
   if (viewerLeaving || !viewerTargetId || viewerReconnectTimer) return;
-  if (viewerRetry >= 8) {
-    say('Não foi possível recuperar a transmissão após várias tentativas. Verifique se a live ainda está ativa e entre novamente.', true);
+  if (viewerRetry >= 5) {
+    say('Não foi possível recuperar a transmissão automaticamente. Tente entrar novamente.', true);
     return;
   }
-  const delays = [1500, 2500, 4000, 7000, 10000, 15000, 20000, 30000];
+  const delays = [1500, 2500, 4000, 7000, 10000];
   const delay = delays[viewerRetry++];
   say(`${reason || 'Conexão interrompida.'} Tentando reconectar (${viewerRetry}/5)…`, true);
   viewerReconnectTimer = setTimeout(() => {
@@ -1124,7 +1090,6 @@ function scheduleViewerReconnect(reason) {
 }
 
 function connectViewer(id, nick, isPublic = false) {
-  if (!window.Peer) { say('Preparando a conexão. Aguarde alguns segundos e tente novamente.', true); return; }
   clearTimeout(viewerConnectTimer); viewerConnectTimer = null;
   showVideoWait('Conectando à transmissão…');
   if (vp) { try { vp.destroy(); } catch (e) {} }
@@ -1143,9 +1108,6 @@ function connectViewer(id, nick, isPublic = false) {
       if (d.t === 'ok') { say('Acesso liberado. Carregando a transmissão…'); if (vconn && vconn.open) vconn.send({ t: 'q', auto: true }); }
       if (d.t === 'capture' && d.state === 'paused') { showVideoWait('A captura da tela foi temporariamente interrompida. Aguardando o transmissor retomar…'); say('Aguardando a captura da tela voltar…'); }
       if (d.t === 'capture' && d.state === 'live') { showVideoWait('A imagem está voltando…'); $('v').play().catch(() => {}); say('Captura retomada.'); }
-      if (d.t === 'audio' && d.state === 'paused') say('O áudio da transmissão foi pausado temporariamente.');
-      if (d.t === 'audio' && d.state === 'live') say('Áudio da transmissão retomado.');
-      if (d.t === 'audio' && d.state === 'ended') say('A captura de áudio foi encerrada; a imagem continua disponível.', true);
       if (d.t === 'cam' && !d.on) hideCam();
       if (d.t === 'pos') setCamPos(d.pos);
       if (d.t === 'no') { say('O streamer recusou a entrada.', true); leave(); }
@@ -1157,22 +1119,18 @@ function connectViewer(id, nick, isPublic = false) {
   peer.on('call', call => {
     if (peer !== vp || viewerLeaving) { call.close(); return; }
     call.answer();
-    if (call.peerConnection) {
-      const monitorViewerConnection = () => {
+    if (call.peerConnection) call.peerConnection.addEventListener('connectionstatechange', () => {
       if (peer !== vp || viewerLeaving) return;
-      const state = call.peerConnection.connectionState, ice = call.peerConnection.iceConnectionState;
-      if (state === 'failed' || ice === 'failed') { scheduleViewerReconnect('A rota de vídeo falhou.'); return; }
-      if (state === 'connected' && (ice === 'connected' || ice === 'completed')) { clearTimeout(viewerIceTimer); viewerIceTimer = null; }
-      else if ((state === 'disconnected' || ice === 'disconnected') && !viewerIceTimer) {
+      const state = call.peerConnection.connectionState;
+      if (state === 'connected') { clearTimeout(viewerIceTimer); viewerIceTimer = null; }
+      else if (state === 'failed') scheduleViewerReconnect('A rota de vídeo falhou.');
+      else if (state === 'disconnected' && !viewerIceTimer) {
         viewerIceTimer = setTimeout(() => {
           viewerIceTimer = null;
-          if (peer === vp && !viewerLeaving && (call.peerConnection.connectionState === 'disconnected' || call.peerConnection.iceConnectionState === 'disconnected')) scheduleViewerReconnect('A conexão de vídeo ficou instável.');
-        }, 5500);
+          if (peer === vp && !viewerLeaving && call.peerConnection.connectionState === 'disconnected') scheduleViewerReconnect('A conexão de vídeo ficou instável.');
+        }, 5000);
       }
-      };
-      call.peerConnection.addEventListener('connectionstatechange', monitorViewerConnection);
-      call.peerConnection.addEventListener('iceconnectionstatechange', monitorViewerConnection);
-    }
+    });
     if (call.metadata && call.metadata.kind === 'cam') {
       call.on('stream', s => { const c = $('cv'); c.srcObject = s; c.classList.remove('hide'); $('camb').classList.remove('hide'); $('camposl').classList.remove('hide'); $('camb').textContent = 'Ocultar câmera'; c.play().catch(() => {}); });
       call.on('close', hideCam);
@@ -1180,7 +1138,7 @@ function connectViewer(id, nick, isPublic = false) {
     }
     call.on('stream', s => {
       if (peer !== vp) return;
-      clearTimeout(viewerConnectTimer); viewerConnectTimer = null; viewerRetry = 0;
+      clearTimeout(viewerConnectTimer); viewerConnectTimer = null;
       const v = $('v'); v.srcObject = s; $('stage').classList.remove('hide');
       showVideoWait('Conexão estabelecida. Aguardando os primeiros quadros…');
       tag('Conectado', 1);
@@ -1226,13 +1184,6 @@ document.addEventListener('visibilitychange', () => {
     }, 6500);
   }
 });
-addEventListener('pageshow', () => {
-  if (document.visibilityState !== 'visible') return;
-  if (actx && actx.state === 'suspended') actx.resume().catch(() => {});
-  if (hp && hp.disconnected && !hp.destroyed) { try { hp.reconnect(); } catch (e) {} }
-  if (vp && vp.disconnected && !vp.destroyed && !viewerLeaving) { try { vp.reconnect(); } catch (e) {} }
-  if (vcall && $('v').srcObject) $('v').play().catch(() => {});
-});
 
 const POS = ['tl', 'bl', 'tr', 'br'];
 function setCamPos(pos) {
@@ -1251,7 +1202,7 @@ function leave() {
   $('v').srcObject = null; hideVideoWait(); hideCam();
   $('stage').classList.add('hide');
   if (document.fullscreenElement) document.exitFullscreen();
-  tag(stream ? 'Ao vivo' : 'Offline', !!stream);  setTimeout(applyPendingUpdate, 1000);
+  tag(stream ? 'Ao vivo' : 'Offline', !!stream);
 }
 $('leave').onclick = () => { leave(); say(''); };
 $('camb').onclick = () => { const hid = $('cv').classList.toggle('hide'); $('camb').textContent = hid ? 'Mostrar câmera' : 'Ocultar câmera'; };
@@ -1419,53 +1370,7 @@ $('v').ondblclick = () => $('fs').click();
   setInterval(check, 800);
   label(); check();
 })();
-// PWA: verifica atualizações em segundo plano e só recarrega quando não há live ativa.
-let swRegistration = null, swUpdateReady = false, swReloading = false;
-let swHadController = !!(navigator.serviceWorker && navigator.serviceWorker.controller);
-function hasActiveSession() { return !!(stream || vcall || viewerTargetId); }
-function showUpdateNotice() {
-  const box = $('updateNotice'), text = $('updateText'), btn = $('updateNow');
-  if (!box || !swUpdateReady) return;
-  box.classList.remove('hide');
-  if (hasActiveSession()) {
-    text.textContent = 'Atualização pronta. Será aplicada quando você encerrar a transmissão ou sair da live.';
-    btn.textContent = 'Após encerrar'; btn.disabled = true;
-  } else {
-    text.textContent = 'Uma nova versão do S.A.R.A.S Caller está pronta.';
-    btn.textContent = 'Atualizar agora'; btn.disabled = false;
-  }
-}
-function applyPendingUpdate() {
-  if (!swUpdateReady || hasActiveSession() || swReloading) return;
-  swReloading = true;
-  location.reload();
-}
-$('updateNow').onclick = () => { if (!hasActiveSession()) applyPendingUpdate(); };
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (!swHadController) { swHadController = true; return; }
-    swUpdateReady = true;
-    if (hasActiveSession()) showUpdateNotice();
-    else applyPendingUpdate();
-  });
-  navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then(reg => {
-    swRegistration = reg;
-    const checkUpdate = () => { if (reg.waiting && navigator.serviceWorker.controller) { swUpdateReady = true; showUpdateNotice(); } };
-    checkUpdate();
-    reg.addEventListener('updatefound', () => {
-      const worker = reg.installing;
-      if (!worker) return;
-      worker.addEventListener('statechange', () => {
-        if (worker.state === 'installed' && navigator.serviceWorker.controller) { swUpdateReady = true; showUpdateNotice(); }
-      });
-    });
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') reg.update().catch(() => {});
-    });
-    setInterval(() => reg.update().catch(() => {}), 4 * 60 * 60 * 1000);
-  }).catch(() => {});
-}
-
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
 </body>
 </html>
