@@ -53,6 +53,11 @@ video{width:100%;background:#000;border:1px solid var(--ln);border-radius:12px;m
 #stage:fullscreen{background:#000;display:block}
 #stage:fullscreen #v{width:100%;height:100%;max-height:none;border:0;border-radius:0;object-fit:contain}
 #vwrap{position:relative}
+/* Botão de saída rápida da tela cheia */
+.exit-fullscreen{display:none;position:absolute;top:12px;right:12px;z-index:6;width:40px;height:40px;min-width:40px;padding:0;border:1px solid rgba(255,255,255,.28);border-radius:50%;background:rgba(0,0,0,.28);color:#fff;font-size:25px;font-weight:400;line-height:1;align-items:center;justify-content:center;backdrop-filter:blur(5px);-webkit-backdrop-filter:blur(5px);box-shadow:0 2px 10px rgba(0,0,0,.18);opacity:.78;transition:opacity .15s,background .15s,border-color .15s}
+.exit-fullscreen:hover,.exit-fullscreen:focus-visible{opacity:1;background:rgba(0,0,0,.62);border-color:rgba(255,255,255,.65)}
+#stage:fullscreen .exit-fullscreen{display:flex}
+#stage:fullscreen .exit-fullscreen:active{background:rgba(0,0,0,.72)}
 #stage:fullscreen #vwrap{height:100%}
 #cv{position:absolute;width:22%;min-width:140px;max-width:320px;height:auto;aspect-ratio:16/9;max-height:none;object-fit:cover;border:2px solid var(--ac);border-radius:10px}
 #vwrap.c-br #cv{right:12px;bottom:12px;left:auto;top:auto}
@@ -74,6 +79,9 @@ video{width:100%;background:#000;border:1px solid var(--ln);border-radius:12px;m
 @media (prefers-reduced-motion:reduce){.alertbox,.ring{animation:none}.alertbox{box-shadow:0 0 28px 8px rgba(88,101,242,.8)}}
 #stage:fullscreen .bar{position:absolute;left:0;right:0;bottom:0;z-index:2;border-radius:0;transition:opacity .2s}
 #stage.idle .bar{opacity:0;visibility:hidden;pointer-events:none}
+/* O X acompanha o mesmo estado de ocultação dos controles inferiores. */
+#stage.idle:fullscreen .exit-fullscreen{opacity:0;visibility:hidden;pointer-events:none}
+#stage:fullscreen .exit-fullscreen{transition:opacity .2s,visibility .2s,background .15s,border-color .15s}
 #stage.idle:fullscreen{cursor:none}
 
 /* Organização responsiva: mantém a identidade visual e prioriza os controles essenciais. */
@@ -144,6 +152,7 @@ button:disabled,select:disabled,input:disabled{opacity:.55;cursor:not-allowed}
   .player-leave{margin:0;grid-column:1/-1}
   #stage video{max-height:68vh}
   #stage:fullscreen video{max-height:none}
+  #stage:fullscreen .exit-fullscreen{top:max(10px,env(safe-area-inset-top));right:max(10px,env(safe-area-inset-right));width:46px;height:46px;min-width:46px;font-size:29px;opacity:.88}
   #stage:fullscreen .bar{display:grid;grid-template-columns:auto 1fr;gap:6px;padding:8px;max-height:38vh;overflow-y:auto;background:rgba(10,12,24,.88)}
   #stage:fullscreen .volume-control{grid-column:1/-1}
   #stage:fullscreen .player-leave{grid-column:1/-1}
@@ -276,7 +285,7 @@ button:disabled,select:disabled,input:disabled{opacity:.55;cursor:not-allowed}
     </div>
 
     <div id="stage" class="hide">
-      <div id="vwrap" class="c-br"><video id="v" autoplay playsinline></video><div id="vwait" class="hide">Aguardando imagem da transmissão…</div><video id="cv" class="hide" muted autoplay playsinline></video></div>
+      <div id="vwrap" class="c-br"><video id="v" autoplay playsinline></video><div id="vwait" class="hide">Aguardando imagem da transmissão…</div><video id="cv" class="hide" muted autoplay playsinline></video><button id="exitfs" class="exit-fullscreen" type="button" aria-label="Sair da tela cheia" title="Sair da tela cheia">×</button></div>
       <div class="bar player-controls">
         <div class="volume-control"><button id="mt" class="sec">Mutar</button>
         <input id="vol" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume"></div>
@@ -1208,6 +1217,7 @@ $('q').onchange = e => {
   vconn.send({ t: 'q', h: h || 0, f: f || 0, b: b || 0, auto: false });
 };
 $('fs').onclick = () => pipWin ? pipWin.close() : document.fullscreenElement ? document.exitFullscreen() : $('stage').requestFullscreen().catch(() => {});
+$('exitfs').onclick = e => { e.preventDefault(); e.stopPropagation(); if (document.fullscreenElement) document.exitFullscreen().catch(() => {}); }; 
 if (!document.pictureInPictureEnabled && !('documentPictureInPicture' in window)) $('pip').classList.add('hide');
 async function openPip() {
   const w = $('vwrap');
