@@ -11,9 +11,9 @@
 <style>
 :root{color-scheme:dark;--bg:#0b0f24;--pn:rgba(24,29,58,.84);--in:rgba(9,12,30,.75);--ln:#303a6e;--fg:#f2f3f5;--mut:#9aa3c7;--ac:#5865f2;--ac2:#4752c4;--ok:#23a55a;--bad:#f23f43}
 *{box-sizing:border-box}
-html{min-height:100%;background:radial-gradient(1100px 650px at 50% -8%,#1b2352 0%,rgba(14,18,48,0) 70%) no-repeat fixed,var(--bg)}
+html{min-height:100%;background:radial-gradient(900px 620px at 8% 48%,rgba(55,75,190,.16),transparent 72%),radial-gradient(900px 620px at 92% 48%,rgba(65,105,220,.14),transparent 72%),radial-gradient(1100px 650px at 50% -8%,#1b2352 0%,rgba(14,18,48,0) 70%) no-repeat fixed,var(--bg)}
 body{margin:0;padding:16px;font:15px/1.45 "gg sans","Segoe UI",system-ui,-apple-system,sans-serif;background:transparent;color:var(--fg)}
-#bg{position:fixed;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none;display:none}
+#bg{position:fixed;inset:0;width:100%;height:100%;z-index:-1;pointer-events:none;display:none;opacity:.9}
 .fxbtn{position:absolute;top:10px;left:10px;font-size:12px;padding:3px 12px;border:1px solid var(--ln);border-radius:99px;color:var(--fg);background:rgba(12,14,24,.78);font-weight:500}
 .fxbtn:hover{border-color:var(--ac);background:rgba(12,14,24,.92)}
 main{max-width:900px;margin:0 auto;display:grid;gap:14px}
@@ -86,7 +86,7 @@ video{width:100%;background:#000;border:1px solid var(--ln);border-radius:12px;m
 
 /* Organização responsiva: mantém a identidade visual e prioriza os controles essenciais. */
 :root{--card-shadow:0 8px 24px rgba(0,0,0,.16)}
-main{max-width:1000px;gap:16px}
+main{max-width:920px;gap:16px}
 .box{box-shadow:var(--card-shadow)}
 .settings-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
 .settings-grid label{min-width:0}
@@ -1286,22 +1286,38 @@ $('v').ondblclick = () => $('fs').click();
     cyc = -1;
   }
 
-  // pontos em grade regular que desenham a palavra (a grade lê muito melhor que pontos sorteados)
+  // As palavras são formadas somente nas faixas laterais livres, nunca atrás do painel central.
+  // Em telas estreitas, mantém apenas o brilho e as partículas para não poluir a interface.
   function targets(word, k) {
+    if (innerWidth < 1120) return [];
     const o = document.createElement('canvas'); o.width = W; o.height = H;
     const c = o.getContext('2d', { willReadFrequently: true });
-    const r = document.querySelector('main').getBoundingClientRect(), lm = r.left * SC, rm = W - r.right * SC;
-    const fit = avail => { c.font = FONT.replace('{s}', H * 0.34); const w = c.measureText(word).width; return w > avail ? H * 0.34 * avail / w : H * 0.34; };
-    let cxm = W / 2, fs = fit(W * 0.82);
-    // com tela larga, a palavra vai para a margem livre ao lado do conteúdo (se couber em tamanho legível)
-    const sides = [[lm, lm / 2], [rm, W - rm / 2]].filter(([m]) => fit(m * 0.9) >= H * 0.16);
-    if (sides.length) { const [m, x] = sides[k % sides.length]; cxm = x; fs = fit(m * 0.9); }
-    c.font = FONT.replace('{s}', fs); c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = '#fff'; c.fillText(word, cxm, H / 2);
+    const r = document.querySelector('main').getBoundingClientRect();
+    const left = Math.max(0, r.left * SC), right = Math.min(W, r.right * SC);
+    const marginL = left, marginR = W - right;
+    const side = k % 2 === 0 ? 'left' : 'right';
+    const available = side === 'left' ? marginL : marginR;
+    // Se uma lateral estiver estreita, tenta a outra; se ambas forem pequenas, não desenha texto.
+    const chosen = available >= 76 * SC ? side : (Math.max(marginL, marginR) >= 76 * SC ? (marginL >= marginR ? 'left' : 'right') : 'none');
+    if (chosen === 'none') return [];
+    const width = chosen === 'left' ? marginL : marginR;
+    const centerX = chosen === 'left' ? width * .5 : right + (W - right) * .5;
+    const maxFont = Math.min(H * .24, width * 1.5);
+    c.font = FONT.replace('{s}', maxFont);
+    const measured = c.measureText(word).width || 1;
+    const fs = Math.max(10, maxFont * Math.min(1, (width * .88) / measured));
+    c.font = FONT.replace('{s}', fs);
+    c.textAlign = 'center'; c.textBaseline = 'middle'; c.fillStyle = '#fff';
+    c.fillText(word, centerX, H * .5);
     const d = c.getImageData(0, 0, W, H).data;
     let st = 2, pts;
     for (; ; st++) {
       pts = [];
-      for (let y = 0; y < H; y += st) for (let x = 0; x < W; x += st) if (d[(y * W + x) * 4 + 3] > 128) pts.push([x, y]);
+      for (let y = 0; y < H; y += st) for (let x = 0; x < W; x += st) {
+        // Proteção extra: nenhum ponto pode invadir a área ocupada pelo layout central.
+        const outsideMain = chosen === 'left' ? x < left - 3 : x > right + 3;
+        if (outsideMain && d[(y * W + x) * 4 + 3] > 128) pts.push([x, y]);
+      }
       if (pts.length <= P.length || st > 40) break;
     }
     return pts.slice(0, P.length);
