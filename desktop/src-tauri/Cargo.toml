@@ -1,6 +1,6 @@
 [package]
 name = "saras-desktop"
-version = "0.1.0"
+version = "0.3.0"
 description = "S.A.R.A.S desktop application"
 authors = ["S.A.R.A.S"]
 edition = "2021"
