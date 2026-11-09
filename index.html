@@ -404,6 +404,12 @@ async function announceLive(id) {
         name: $('nick').value.trim().slice(0, 20) || 'Streamer',
         visibility: liveVisibility
       });
+      // Se a transmissão terminou enquanto o pedido estava em trânsito,
+      // envia "off" novamente para impedir que um anúncio atrasado ressuscite a live.
+      if (!stream || myId !== id || !topic) {
+        await post({ t: 'off', id });
+        return;
+      }
       if (result.ok) {
         if (liveDirectoryWarning && myId === id) say('');
         liveDirectoryWarning = false;
