@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Autotest | S.A.R.A.S Caller</title>
+<style>
+:root{color-scheme:dark;--bg:#0b0f24;--panel:#171d3a;--line:#303a6e;--fg:#f2f3f5;--mut:#aab2d0;--accent:#5865f2;--ok:#23a55a;--bad:#f23f43}
+*{box-sizing:border-box}body{margin:0;padding:22px;background:radial-gradient(900px 600px at 50% 0,#1b2352,transparent 70%),var(--bg);color:var(--fg);font:15px/1.5 "Segoe UI",system-ui,sans-serif}
+main{max-width:900px;margin:auto;display:grid;gap:16px}.panel{padding:18px;border:1px solid var(--line);border-radius:14px;background:rgba(23,29,58,.9);display:grid;gap:13px}
+h1{font-size:24px;margin:0}h2{font-size:15px;margin:0;color:var(--mut)}p{margin:0}.mut{color:var(--mut);font-size:13px}
+.row{display:flex;gap:12px;align-items:end;flex-wrap:wrap}label{display:grid;gap:5px;color:var(--mut);font-size:13px}select,button{font:inherit;border-radius:8px;padding:10px 13px}select{background:#0d1230;color:var(--fg);border:1px solid var(--line)}button{cursor:pointer;border:1px solid var(--accent);background:var(--accent);color:white;font-weight:650}button.secondary{background:transparent;border-color:var(--line)}button:disabled{opacity:.5;cursor:not-allowed}
+.grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.metric{padding:12px;background:#0d1230;border:1px solid var(--line);border-radius:10px}.metric strong{display:block;font-size:23px;font-variant-numeric:tabular-nums}.metric span{font-size:12px;color:var(--mut)}
+#preview{width:100%;max-height:380px;background:#000;border-radius:10px;display:block}#log{white-space:pre-wrap;max-height:240px;overflow:auto;font:12px/1.5 ui-monospace,monospace;background:#0d1230;padding:12px;border-radius:8px}
+.status{padding:10px 12px;border-radius:8px;background:#0d1230}.good{color:#68d391}.warn{color:#ffd166}.bad{color:#ff8585}
+@media(max-width:600px){body{padding:12px}.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.panel{padding:14px}}
+</style></head>
+<body><main>
+<div class="panel"><div><p class="mut">PROJECT S.A.R.A.S CALLER</p><h1>Autotest de transmissão</h1></div>
+<p>Teste local de captura, codificação, transporte WebRTC, recepção e decodificação. Não precisa de outra pessoa, câmera ou microfone.</p>
+<p class="mut">O vídeo é gerado no próprio navegador e enviado para outro PeerConnection no mesmo computador. Nenhum vídeo é publicado ou enviado para a internet.</p>
+<div class="row">
+<label>Resolução<select id="resolution"><option value="1280x720" selected>720p</option><option value="1920x1080">1080p</option></select></label>
+<label>Meta de FPS<select id="fps"><option value="30">30 FPS</option><option value="60" selected>60 FPS</option></select></label>
+<label>Duração<select id="duration"><option value="2">2 minutos</option><option value="5" selected>5 minutos</option><option value="10">10 minutos</option></select></label>
+</div><div class="row"><button id="start">Iniciar autotest</button><button id="stop" class="secondary" disabled>Parar teste</button><a href="./" class="mut">Voltar ao S.A.R.A.S</a></div>
+<div id="status" class="status">Aguardando início do teste.</div></div>
+<div class="panel"><h2>Prévia do espectador local</h2><video id="preview" autoplay muted playsinline></video><div class="grid">
+<div class="metric"><strong id="capture">—</strong><span>FPS da captura</span></div><div class="metric"><strong id="decode">—</strong><span>FPS decodificados</span></div><div class="metric"><strong id="rtt">—</strong><span>Latência local (ms)</span></div>
+<div class="metric"><strong id="frames">—</strong><span>Quadros recebidos</span></div><div class="metric"><strong id="drops">—</strong><span>Quadros perdidos</span></div><div class="metric"><strong id="resolutionOut">—</strong><span>Resolução recebida</span></div>
+</div></div>
+<div class="panel"><h2>Resultado e diagnóstico</h2><div id="summary" class="mut">O relatório aparecerá ao final.</div><pre id="log">Nenhum teste executado.</pre></div>
+</main><script src="autotest.js"></script></body></html>
