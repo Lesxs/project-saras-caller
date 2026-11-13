@@ -1,0 +1,12 @@
+{
+  "name": "project-saras-caller",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/check.mjs",
+    "check:dist": "node scripts/check.mjs --dist",
+    "test": "node --test tests/*.test.mjs",
+    "build": "node scripts/build.mjs"
+  }
+}
