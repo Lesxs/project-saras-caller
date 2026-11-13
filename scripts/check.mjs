@@ -29,7 +29,7 @@ const checkJs = (file, content) => {
 const html = read('index.html');
 const sw = read('sw.js');
 const policy = read('adaptive-policy.js');
-const manifestText = read('manifest.webmanifest');
+const manifestText = read('manifest.webmanifest');\nconst autotestHtml = read('autotest.html');\nconst autotestJs = read('autotest.js');
 
 if (html) {
   const ids = [...html.matchAll(/\bid=["']([^"']+)["']/g)].map(match => match[1]);
@@ -61,7 +61,7 @@ if (html) {
 }
 
 if (sw) checkJs('sw.js', sw);
-if (policy) checkJs('adaptive-policy.js', policy);
+if (policy) checkJs('adaptive-policy.js', policy);\nif (autotestJs) checkJs('autotest.js', autotestJs);\nif (autotestHtml && !autotestHtml.includes('<script src="autotest.js"></script>')) fail('autotest.html não carrega autotest.js');
 
 if (manifestText) {
   try {
