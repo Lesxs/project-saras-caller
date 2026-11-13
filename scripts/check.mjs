@@ -20,8 +20,7 @@ const checkJs = (file, content) => {
   try {
     writeFileSync(tempFile, content);
     const result = spawnSync(process.execPath, ['--check', tempFile], { encoding: 'utf8' });
-    if (result.status !== 0) fail('Sintaxe inválida em ' + file + ':
-' + (result.stderr || result.stdout));
+    if (result.status !== 0) fail('Sintaxe inválida em ' + file + ':\n' + (result.stderr || result.stdout));
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -78,9 +77,7 @@ if (manifestText) {
 }
 
 if (errors.length) {
-  console.error(errors.join('
-
-'));
+  console.error(errors.join('\n\n'));
   process.exitCode = 1;
 } else {
   console.log('Verificação concluída: ' + root + ' — HTML, IDs, referências, JavaScript e manifest válidos.');
