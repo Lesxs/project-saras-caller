@@ -6,7 +6,9 @@ const out = join(root, 'dist');
 const files = [
   'index.html',
   'sw.js',
-  'adaptive-policy.js',\n  'autotest.html',\n  'autotest.js',
+  'adaptive-policy.js',
+  'autotest.html',
+  'autotest.js',
   'manifest.webmanifest',
   'banner.jpg',
   'icon-192.png',
