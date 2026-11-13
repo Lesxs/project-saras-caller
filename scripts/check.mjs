@@ -20,7 +20,8 @@ const checkJs = (file, content) => {
   try {
     writeFileSync(tempFile, content);
     const result = spawnSync(process.execPath, ['--check', tempFile], { encoding: 'utf8' });
-    if (result.status !== 0) fail('Sintaxe inválida em ' + file + ':\n' + (result.stderr || result.stdout));
+    if (result.status !== 0) fail('Sintaxe inválida em ' + file + ':
+' + (result.stderr || result.stdout));
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
@@ -29,7 +30,9 @@ const checkJs = (file, content) => {
 const html = read('index.html');
 const sw = read('sw.js');
 const policy = read('adaptive-policy.js');
-const manifestText = read('manifest.webmanifest');\nconst autotestHtml = read('autotest.html');\nconst autotestJs = read('autotest.js');
+const manifestText = read('manifest.webmanifest');
+const autotestHtml = read('autotest.html');
+const autotestJs = read('autotest.js');
 
 if (html) {
   const ids = [...html.matchAll(/\bid=["']([^"']+)["']/g)].map(match => match[1]);
@@ -61,7 +64,9 @@ if (html) {
 }
 
 if (sw) checkJs('sw.js', sw);
-if (policy) checkJs('adaptive-policy.js', policy);\nif (autotestJs) checkJs('autotest.js', autotestJs);\nif (autotestHtml && !autotestHtml.includes('<script src="autotest.js"></script>')) fail('autotest.html não carrega autotest.js');
+if (policy) checkJs('adaptive-policy.js', policy);
+if (autotestJs) checkJs('autotest.js', autotestJs);
+if (autotestHtml && !autotestHtml.includes('<script src="autotest.js"></script>')) fail('autotest.html não carrega autotest.js');
 
 if (manifestText) {
   try {
@@ -73,7 +78,9 @@ if (manifestText) {
 }
 
 if (errors.length) {
-  console.error(errors.join('\n\n'));
+  console.error(errors.join('
+
+'));
   process.exitCode = 1;
 } else {
   console.log('Verificação concluída: ' + root + ' — HTML, IDs, referências, JavaScript e manifest válidos.');
