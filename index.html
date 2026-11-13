@@ -37,7 +37,7 @@ button.sec:hover{border-color:var(--ac);background:rgba(88,101,242,.15)}
 button.bad{background:var(--bad);border-color:var(--bad)}
 button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
 input:focus,select:focus{border-color:var(--ac)}
-h2{font-size:13px;margin:0;color:var(--mut);font-weight:600}
+h2{font-size:14px;margin:0;color:var(--mut);font-weight:650;letter-spacing:.01em}
 ul{list-style:none;margin:0;padding:0;display:grid;gap:6px}
 li{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 12px;background:var(--in);border:1px solid var(--ln);border-radius:8px}
 li div{display:flex;gap:6px}
@@ -87,6 +87,7 @@ video{width:100%;background:#000;border:1px solid var(--ln);border-radius:12px;m
 /* Organização responsiva: mantém a identidade visual e prioriza os controles essenciais. */
 :root{--card-shadow:0 8px 24px rgba(0,0,0,.16)}
 main{max-width:920px;gap:16px}
+.autotest-link{display:inline-flex;align-items:center;justify-content:center;min-height:42px;padding:9px 13px;border:1px solid var(--ln);border-radius:8px;color:var(--fg);text-decoration:none;background:rgba(9,12,30,.45);font-weight:600}.autotest-link:hover{border-color:var(--ac);background:rgba(88,101,242,.15)}
 .box{box-shadow:var(--card-shadow)}
 .settings-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
 .settings-grid label{min-width:0}
@@ -108,6 +109,10 @@ main{max-width:920px;gap:16px}
 #hw:empty,#camres:empty,#stats:empty{display:none}
 #pv{max-width:min(100%,560px);aspect-ratio:16/9;object-fit:contain;align-self:start}
 #pcv{max-width:220px;aspect-ratio:16/9;object-fit:cover}
+.directory-heading{display:flex;align-items:end;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.directory-heading label{min-width:240px}
+.directory-heading input{width:100%;min-height:42px}
+.live-directory{gap:14px}
 .live-lists{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .list-panel{min-width:0;display:grid;gap:8px;padding:12px;border:1px solid var(--ln);border-radius:10px;background:rgba(9,12,30,.28)}
 .list-panel li{min-width:0;flex-wrap:wrap}
@@ -142,6 +147,8 @@ button:disabled,select:disabled,input:disabled{opacity:.55;cursor:not-allowed}
   .stream-actions button{width:100%;min-height:48px}
   .live-actions span{grid-column:1/-1}
   #pv{max-width:100%;width:100%}
+  .directory-heading{display:grid;grid-template-columns:1fr}
+  .directory-heading label{min-width:0;width:100%}
   .live-lists{grid-template-columns:1fr}
   .player-controls{display:grid;grid-template-columns:auto 1fr;gap:8px;padding:10px}
   .volume-control{grid-column:1/-1;display:grid;grid-template-columns:auto 1fr}
@@ -196,17 +203,16 @@ button:disabled,select:disabled,input:disabled{opacity:.55;cursor:not-allowed}
   </div>
 
   <section id="app" class="hide">
-    <div class="box">
-      <label>Seu nome (opcional) <input id="nick" maxlength="20" placeholder="ex.: Pedro"></label>
-    </div>
-
-    <div class="box">
-      <h2>Ao vivo agora</h2>
+    <div class="box live-directory">
+      <div class="directory-heading">
+        <h2>Ao vivo agora</h2>
+        <label>Seu nome (opcional) <input id="nick" maxlength="20" placeholder="ex.: Pedro" autocomplete="nickname"></label>
+      </div>
       <ul id="lv"></ul>
     </div>
 
     <div class="box">
-      <h2>Transmitir</h2>
+      <h2>Transmitir</h2>\n      <a class="autotest-link" href="autotest.html">Executar autotest local</a>
       <div class="settings-grid primary-settings">
         <label>Resolução
           <select id="res"><option value="720">720p</option><option value="1080" selected>1080p</option><option value="1440">1440p (2K)</option></select>
@@ -268,12 +274,13 @@ button:disabled,select:disabled,input:disabled{opacity:.55;cursor:not-allowed}
       <p id="hw" class="mut info-panel"></p>
 
       <div id="live" class="hide" style="display:grid;gap:12px">
-        <div class="action-row live-actions"><button id="pvb" class="sec">Esconder prévia</button><button id="altest" class="sec">Testar alerta</button><span class="mut">Compartilhar só a janela do jogo evita que a prévia apareça repetida na captura da tela inteira.</span></div>
+        <div class="action-row live-actions"><button id="pvb" class="sec">Esconder prévia</button><span class="mut">Compartilhar só a janela do jogo evita que a prévia apareça repetida na captura da tela inteira.</span></div>
         <video id="pv" muted autoplay playsinline></video>
         <video id="pcv" class="hide" muted autoplay playsinline></video>
         <p id="camres" class="mut"></p>
         <details class="settings-disclosure diagnostics-panel">
           <summary>Diagnóstico da transmissão</summary>
+          <div class="action-row diagnostics-actions"><button id="altest" class="sec" type="button">Testar alerta</button></div>
           <p id="stats" class="mut info-panel"></p>
           <h2>Diagnóstico por espectador</h2><ul id="vdiag"><li class="mut">Aguardando dados da transmissão…</li></ul>
         </details>
@@ -323,6 +330,7 @@ button:disabled,select:disabled,input:disabled{opacity:.55;cursor:not-allowed}
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script src="adaptive-policy.js"></script>
 <script>
 let pipWin = null;
 const $ = id => document.getElementById(id) || (pipWin && pipWin.document.getElementById(id));
@@ -341,6 +349,7 @@ const baseTitle = document.title;
 const WIN_AUDIO = (() => { const m = navigator.userAgent.match(/(?:Chrome|Chromium)\/(\d+)/); return !!m && +m[1] >= 141; })();
 if (!WIN_AUDIO) $('asrc').options[0].textContent = 'Somente a janela do jogo (não suportado neste navegador)';
 let hp, vp, stream, camStream, timer, last, fh = [], vconn, vcall, vtimer, vprev, vreportAt = 0, vfreezePending = 0, es, grp, topic, myId, guest = 0;
+let statsBusy = false, viewerStatsBusy = false;
 let liveVisibility = 'private';
 const senderStatsPrev = new Map();
 let viewerTargetId = null, viewerNick = '', viewerRequestedPublic = false, viewerReconnectTimer = null, viewerIceTimer = null, viewerRetry = 0, viewerLeaving = false, captureInfo = 'Captura ainda não iniciada';
@@ -863,20 +872,19 @@ function adaptViewer(v, d) {
   const profiles = adaptiveProfiles();
   v.tierIndex = Math.max(0, Math.min(v.tierIndex || 0, profiles.length - 1));
   const p = profiles[v.tierIndex];
-  const recF = Math.max(0, +d.recF || 0), decF = Math.max(0, +d.decF || 0), loss = Math.max(0, +d.lossRate || 0);
-  const drop = Math.max(0, +d.dropRate || 0), rtt = Math.max(0, +d.rtt || 0);
-  const jitter = Math.max(0, +d.jitter || 0), freezes = Math.max(0, +d.freezes || 0);
   const local = v.localDiag || {};
-  const cpuLimited = local.lim === 'cpu' || (local.encF > 0 && local.capF > 0 && local.encF < local.capF * 0.88);
-  const networkLimited = local.lim === 'bandwidth' || loss > 0.035 || rtt > 450 || jitter > 0.055;
-  const weak = cpuLimited || decF < p.f * 0.84 || recF < p.f * 0.84 || drop > 0.12 || networkLimited || freezes > 0;
-  const strong = decF >= p.f * 0.94 && recF >= p.f * 0.94 && loss < 0.012 && drop < 0.035 && (!rtt || rtt < 280) && jitter < 0.03 && freezes === 0;
-  if (weak) {
+  const assessment = SARASAdaptivePolicy.evaluate({
+    profileF: p.f, sourceF: local.capF, encodedF: local.encF,
+    receivedF: d.recF, decodedF: d.decF, lossRate: d.lossRate,
+    dropRate: d.dropRate, rtt: d.rtt, jitter: d.jitter,
+    freezes: d.freezes, limitation: local.lim
+  });
+  if (assessment.weak) {
     v.badSamples = (v.badSamples || 0) + 1; v.goodSamples = 0;
     if (v.badSamples >= 2 && v.tierIndex < profiles.length - 1) {
       v.tierIndex++; v.badSamples = 0; applyBr(v.call);
     }
-  } else if (strong) {
+  } else if (assessment.strong) {
     v.goodSamples = (v.goodSamples || 0) + 1; v.badSamples = 0;
     if (v.goodSamples >= 4 && v.tierIndex > 0) {
       v.tierIndex--; v.goodSamples = 0; applyBr(v.call);
@@ -911,6 +919,9 @@ async function applyBr(call) {
 $('br').onchange = () => viewers.forEach(v => applyBr(v.call));
 
 async function stats() {
+  if (statsBusy) return;
+  statsBusy = true;
+  try {
   if (!viewers.size) {
     $('stats').textContent = `Captura da fonte: ${captureInfo}\nAguardando espectadores…`;
     $('vdiag').replaceChildren();
@@ -940,6 +951,9 @@ async function stats() {
       }
       senderStatsPrev.set(id, now);
       const lim = o.qualityLimitationReason || 'none';
+      const localCandidate = cp && cp.localCandidateId ? r.get(cp.localCandidateId) : null;
+      const remoteCandidate = cp && cp.remoteCandidateId ? r.get(cp.remoteCandidateId) : null;
+      const route = cp ? String((localCandidate && localCandidate.candidateType) || '?') + ' → ' + String((remoteCandidate && remoteCandidate.candidateType) || '?') + ' (' + String(cp.protocol || '?') + ')' : 'não identificada';
       const avail = cp && cp.availableOutgoingBitrate ? Math.round(cp.availableOutgoingBitrate / 1000) : 0;
       const rtt = cp && cp.currentRoundTripTime ? Math.round(cp.currentRoundTripTime * 1000) : 0;
       const cod = ((codecs[o.codecId] || {}).mimeType || '?').replace('video/', '');
@@ -955,7 +969,7 @@ async function stats() {
       const bgp = document.visibilityState !== 'visible';
       const localText = `Captura ${Math.round(capF)} fps · codificação ${Math.round(encF)} fps · envio ${Math.round(sntF)} fps · ${encMs.toFixed(1)} ms/quadro`;
       const netText = `${kbps} kbps enviados${avail ? ` · banda estimada ${avail} kbps` : ''}${rtt ? ` · RTT ${rtt} ms` : ''} · limite ${lim}`;
-      summary.push(`${v.nick}: ${localText}\n${cod} · ${o.encoderImplementation || 'encoder não identificado'}${o.powerEfficientEncoder === true ? ' (GPU eficiente reportada)' : o.powerEfficientEncoder === false ? ' (GPU eficiente não reportada)' : ' (aceleração não informada)'} · ${netText}`);
+      summary.push(`${v.nick}: ${localText}\n${cod} · ${o.encoderImplementation || 'encoder não identificado'}${o.powerEfficientEncoder === true ? ' (GPU eficiente reportada)' : o.powerEfficientEncoder === false ? ' (GPU eficiente não reportada)' : ' (aceleração não informada)'} · ${netText}\nRota ICE: ${route}`);
       const remoteText = remote.recF !== undefined ? `Recebido ${Math.round(remote.recF)} fps · decodificado ${Math.round(remote.decF || 0)} fps · perda ${(100 * (remote.lossRate || 0)).toFixed(1)}% · descarte ${(100 * (remote.dropRate || 0)).toFixed(1)}% · jitter ${Math.round((remote.jitter || 0) * 1000)} ms · RTT ${Math.round(remote.rtt || 0)} ms · congelamentos ${remote.freezes || 0}` : 'Aguardando métricas do espectador…';
       details.push({ nick: v.nick, localText, remoteText, why, bgp, drop });
     } catch (e) {
@@ -972,10 +986,14 @@ async function stats() {
     const reason = document.createElement('span'); reason.className = 'mut'; reason.textContent = `Diagnóstico: ${d.why}${d.bgp ? ' · mantenha a página visível durante a transmissão' : ''}`;
     li.replaceChildren(title, local, remote, reason); ul.appendChild(li);
   });
+  } finally {
+    statsBusy = false;
+  }
 }
 
 async function vstats() {
-  if (!vcall) return;
+  if (!vcall || viewerStatsBusy) return;
+  viewerStatsBusy = true;
   try {
     const r = await vcall.peerConnection.getStats(); let i, a, cp; const codecs = {};
     r.forEach(s => {
@@ -1029,7 +1047,9 @@ async function vstats() {
       }
     }
     vprev = now;
-  } catch (e) {}
+  } catch (e) {} finally {
+    viewerStatsBusy = false;
+  }
 }
 function row(list, nick, buttons) {
   const li = document.createElement('li');
