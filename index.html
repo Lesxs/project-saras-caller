@@ -212,8 +212,7 @@ button:disabled,select:disabled,input:disabled{opacity:.55;cursor:not-allowed}
     </div>
 
     <div class="box">
-      <h2>Transmitir</h2>
-      <a class="autotest-link" href="autotest.html">Executar autotest local</a>
+      <h2>Transmitir</h2>\n      <a class="autotest-link" href="autotest.html">Executar autotest local</a>
       <div class="settings-grid primary-settings">
         <label>Resolução
           <select id="res"><option value="720">720p</option><option value="1080" selected>1080p</option><option value="1440">1440p (2K)</option></select>
@@ -646,8 +645,7 @@ function chosen() {
 }
 function pref(sdp) {
   const c = chosen(); if (c === 'auto') return sdp;
-  const L = sdp.split('\r
-'), mi = L.findIndex(l => l.startsWith('m=video')); if (mi < 0) return sdp;
+  const L = sdp.split('\r\n'), mi = L.findIndex(l => l.startsWith('m=video')); if (mi < 0) return sdp;
   const want = [];
   L.forEach(l => { const m = l.match(/^a=rtpmap:(\d+) ([A-Za-z0-9]+)\//); if (m && m[2].toUpperCase() === c) want.push(m[1]); });
   const fm = {}; L.forEach(l => { const m = l.match(/^a=fmtp:(\d+) (.*)/); if (m) fm[m[1]] = m[2]; });
@@ -663,8 +661,7 @@ function pref(sdp) {
   const parts = L[mi].split(' '), pts = parts.slice(3);
   if (!want.length) return sdp;
   L[mi] = parts.slice(0, 3).concat(want.filter(x => pts.includes(x)), pts.filter(x => !want.includes(x))).join(' ');
-  return L.join('\r
-');
+  return L.join('\r\n');
 }
 function gpuInfo() {
   try {
@@ -737,15 +734,11 @@ async function probe() {
   const lines = Object.keys(CT).map(k => NM[k] + ': ' + codecStatusText(k, results[k]));
   const selected = chosen();
   const selectedLabel = selected === 'auto' ? 'decisão do navegador' : (NM[selected] || selected);
-  $('hw').textContent = 'Smart Encoder · ' + browser + '
-' +
-    'Codecs disponíveis: ' + lines.join(' · ') + '
-' +
+  $('hw').textContent = 'Smart Encoder · ' + browser + '\n' +
+    'Codecs disponíveis: ' + lines.join(' · ') + '\n' +
     'Preferência automática: ' + (NM[autoCodec] || autoCodec) + ' · seleção atual: ' + selectedLabel +
-    (g ? '
-GPU reportada: ' + g.name + ' · fabricante provável: ' + g.vendor + (g.masked ? ' · identificação limitada pelo navegador' : '') : '') +
-    '
-Aceleração física é decidida pelo navegador; a confirmação real aparece nas métricas do encoder durante a transmissão.';
+    (g ? '\nGPU reportada: ' + g.name + ' · fabricante provável: ' + g.vendor + (g.masked ? ' · identificação limitada pelo navegador' : '') : '') +
+    '\nAceleração física é decidida pelo navegador; a confirmação real aparece nas métricas do encoder durante a transmissão.';
 }
 ['res', 'fps', 'br'].forEach(k => $(k).addEventListener('change', probe));
 $('cdc').addEventListener('change', () => {
@@ -930,8 +923,7 @@ async function stats() {
   statsBusy = true;
   try {
   if (!viewers.size) {
-    $('stats').textContent = `Captura da fonte: ${captureInfo}
-Aguardando espectadores…`;
+    $('stats').textContent = `Captura da fonte: ${captureInfo}\nAguardando espectadores…`;
     $('vdiag').replaceChildren();
     const li = document.createElement('li'); li.textContent = 'Aguardando dados da transmissão…'; $('vdiag').appendChild(li);
     senderStatsPrev.clear(); return;
@@ -977,20 +969,14 @@ Aguardando espectadores…`;
       const bgp = document.visibilityState !== 'visible';
       const localText = `Captura ${Math.round(capF)} fps · codificação ${Math.round(encF)} fps · envio ${Math.round(sntF)} fps · ${encMs.toFixed(1)} ms/quadro`;
       const netText = `${kbps} kbps enviados${avail ? ` · banda estimada ${avail} kbps` : ''}${rtt ? ` · RTT ${rtt} ms` : ''} · limite ${lim}`;
-      summary.push(`${v.nick}: ${localText}
-${cod} · ${o.encoderImplementation || 'encoder não identificado'}${o.powerEfficientEncoder === true ? ' (GPU eficiente reportada)' : o.powerEfficientEncoder === false ? ' (GPU eficiente não reportada)' : ' (aceleração não informada)'} · ${netText}
-Rota ICE: ${route}`);
+      summary.push(`${v.nick}: ${localText}\n${cod} · ${o.encoderImplementation || 'encoder não identificado'}${o.powerEfficientEncoder === true ? ' (GPU eficiente reportada)' : o.powerEfficientEncoder === false ? ' (GPU eficiente não reportada)' : ' (aceleração não informada)'} · ${netText}\nRota ICE: ${route}`);
       const remoteText = remote.recF !== undefined ? `Recebido ${Math.round(remote.recF)} fps · decodificado ${Math.round(remote.decF || 0)} fps · perda ${(100 * (remote.lossRate || 0)).toFixed(1)}% · descarte ${(100 * (remote.dropRate || 0)).toFixed(1)}% · jitter ${Math.round((remote.jitter || 0) * 1000)} ms · RTT ${Math.round(remote.rtt || 0)} ms · congelamentos ${remote.freezes || 0}` : 'Aguardando métricas do espectador…';
       details.push({ nick: v.nick, localText, remoteText, why, bgp, drop });
     } catch (e) {
       details.push({ nick: v.nick, localText: 'Não foi possível ler as métricas locais.', remoteText: '', why: 'Verifique a conexão', bgp: false, drop: 0 });
     }
   }
-  $('stats').textContent = `Captura da fonte: ${captureInfo}
-
-` + summary.join('
-
-');
+  $('stats').textContent = `Captura da fonte: ${captureInfo}\n\n` + summary.join('\n\n');
   const ul = $('vdiag'); ul.replaceChildren();
   details.forEach(d => {
     const li = document.createElement('li'); li.style.display = 'grid'; li.style.alignItems = 'start';
@@ -1051,13 +1037,10 @@ async function vstats() {
         say('O áudio parece ter parado. Tentando recuperar a transmissão…', true);
         scheduleViewerReconnect('O fluxo de áudio parou enquanto o vídeo continuou.');
       }
-      $('vst').textContent = `Recebido ${Math.round(recF)} fps · decodificado ${Math.round(decF)} fps · ${kbps} kbps
-` +
-        `Perda ${(100 * lossRate).toFixed(1)}% · descarte ${(100 * dropRate).toFixed(1)}% · jitter ${Math.round(jitter * 1000)} ms · congelamentos ${now.freezes}
-` +
+      $('vst').textContent = `Recebido ${Math.round(recF)} fps · decodificado ${Math.round(decF)} fps · ${kbps} kbps\n` +
+        `Perda ${(100 * lossRate).toFixed(1)}% · descarte ${(100 * dropRate).toFixed(1)}% · jitter ${Math.round(jitter * 1000)} ms · congelamentos ${now.freezes}\n` +
         `${((codecs[i.codecId] || {}).mimeType || '?').replace('video/', '')} · ${i.decoderImplementation || 'decoder não identificado'}${i.powerEfficientDecoder === true ? ' (GPU eficiente reportada)' : i.powerEfficientDecoder === false ? ' (GPU eficiente não reportada)' : ' (aceleração não informada)'} · RTT ${Math.round(rtt)} ms` +
-        (a ? `
-Áudio: jitter ${Math.round(now.audioJitter * 1000)} ms · perda ${Math.max(0, now.audioLost)} pacotes` : '');
+        (a ? `\nÁudio: jitter ${Math.round(now.audioJitter * 1000)} ms · perda ${Math.max(0, now.audioLost)} pacotes` : '');
       if (vconn && vconn.open && now.t - (vreportAt || 0) >= 3500) {
         vconn.send({ t: 'qstats', recF, decF, lossRate, dropRate, rtt, jitter, freezes: vfreezePending, audioJitter: now.audioJitter });
         vreportAt = now.t; vfreezePending = 0;
@@ -1313,9 +1296,7 @@ async function openPip() {
   if ('documentPictureInPicture' in window) {
     try {
       const pw = await documentPictureInPicture.requestWindow({ width: 480, height: 300 });
-      const css = Array.from(document.styleSheets).map(ss => { try { return Array.from(ss.cssRules).map(r => r.cssText).join('
-'); } catch (e) { return ''; } }).join('
-');
+      const css = Array.from(document.styleSheets).map(ss => { try { return Array.from(ss.cssRules).map(r => r.cssText).join('\n'); } catch (e) { return ''; } }).join('\n');
       const st = pw.document.createElement('style'); st.textContent = css; pw.document.head.appendChild(st);
       pw.document.body.style.cssText = 'margin:0;background:#000;height:100vh;overflow:hidden';
       pipWin = pw; w.classList.add('pip'); pw.document.body.appendChild(w);
